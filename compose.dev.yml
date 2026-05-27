@@ -1,0 +1,48 @@
+# Development stack: hot reload + source bind-mounts for both services.
+#   docker compose -f compose.dev.yml up --build
+#
+# Uses the `development` image target (dev deps + nest watch). Source is mounted
+# live so changes recompile without rebuilding the image. node_modules stays
+# inside the container (compiled better-sqlite3 native addon preserved).
+services:
+  app:
+    build:
+      context: .
+      target: development
+    container_name: timeoff-app-dev
+    command: npm run start:dev
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_PATH: /app/data/timeoff.sqlite
+      HCM_BASE_URL: http://mock-hcm:3001
+      RESERVATION_TTL_DAYS: 14
+      HCM_RETRY_MAX_ATTEMPTS: 5
+      HCM_RETRY_BACKOFF_MS: 1000
+    volumes:
+      - ./src:/app/src
+      - ./test:/app/test
+      - timeoff-dev-data:/app/data
+    depends_on:
+      - mock-hcm
+
+  mock-hcm:
+    build:
+      context: .
+      target: development
+    container_name: timeoff-mock-hcm-dev
+    # Separate Nest entrypoint, watch mode (built per ADR-007)
+    command: npm run start:dev -- --entryFile mock-hcm/main
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      HCM_SCENARIO: correct
+    volumes:
+      - ./src:/app/src
+
+volumes:
+  timeoff-dev-data:

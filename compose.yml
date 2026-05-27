@@ -1,0 +1,49 @@
+# Production-like stack: Time-Off service + Mock HCM server.
+#   docker compose up --build
+#
+# Both services run from the same image (different entrypoints). The app reaches
+# the mock over the compose network at http://mock-hcm:3001. In a real deployment
+# you would drop the mock-hcm service and point HCM_BASE_URL at the real HCM.
+services:
+  app:
+    build:
+      context: .
+      target: runtime
+    image: timeoff-service:latest
+    container_name: timeoff-app
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_PATH: /app/data/timeoff.sqlite
+      HCM_BASE_URL: http://mock-hcm:3001
+      RESERVATION_TTL_DAYS: 14          # ADR-002 reservation TTL
+      HCM_RETRY_MAX_ATTEMPTS: 5         # ADR-004 PENDING_SYNC retry cap
+      HCM_RETRY_BACKOFF_MS: 1000        # ADR-004 backoff base
+    volumes:
+      - timeoff-data:/app/data
+    depends_on:
+      mock-hcm:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Mock HCM (ADR-007) — same image, separate entrypoint dist/mock-hcm/main.js.
+  # Built during the build phase; topology defined here now.
+  mock-hcm:
+    build:
+      context: .
+      target: runtime
+    image: timeoff-service:latest
+    container_name: timeoff-mock-hcm
+    command: ["node", "dist/mock-hcm/main.js"]
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      HCM_SCENARIO: correct             # correct | silent-insufficient | timeout | mutate-between-calls | divergent-batch
+    restart: unless-stopped
+
+volumes:
+  timeoff-data:

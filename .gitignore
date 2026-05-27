@@ -1,0 +1,32 @@
+# Dependencies
+/node_modules
+
+# Build output
+/dist
+*.tsbuildinfo
+
+# Test coverage
+/coverage
+
+# SQLite databases
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+/data
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs
+
+# Editor / OS
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json
