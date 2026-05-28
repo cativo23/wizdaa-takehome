@@ -4,6 +4,7 @@ import {
   Body,
   Param,
   Headers,
+  BadRequestException,
   ForbiddenException,
   ParseUUIDPipe,
 } from '@nestjs/common';
@@ -40,10 +41,20 @@ export class TimeOffRequestController {
     @Body() body: SubmitRequestDto,
     @Headers('idempotency-key') idempotencyKey: string,
     @Headers('x-employee-id') principalId: string,
-    @Headers('x-role') _role: string,
+    @Headers('x-role') role: string,
   ): Promise<TimeOffRequest> {
+    if (!principalId) {
+      throw new BadRequestException('X-Employee-Id header is required.');
+    }
+    if (role !== 'employee' && role !== 'manager') {
+      throw new BadRequestException(
+        'X-Role header must be "employee" or "manager".',
+      );
+    }
+    // Idempotency-Key is required for submit (ADR-012). Any non-empty string is
+    // accepted in v1; UUID-format enforcement can be added later.
     if (!idempotencyKey) {
-      throw new ForbiddenException('Idempotency-Key header is required.');
+      throw new BadRequestException('Idempotency-Key header is required.');
     }
     if (body.employeeId !== principalId) {
       throw new ForbiddenException(
@@ -69,6 +80,14 @@ export class TimeOffRequestController {
     @Headers('x-employee-id') managerId: string,
     @Headers('x-role') role: string,
   ): Promise<TimeOffRequest> {
+    if (!managerId) {
+      throw new BadRequestException('X-Employee-Id header is required.');
+    }
+    if (role !== 'employee' && role !== 'manager') {
+      throw new BadRequestException(
+        'X-Role header must be "employee" or "manager".',
+      );
+    }
     if (role !== 'manager') {
       throw new ForbiddenException('Only managers may approve requests.');
     }
@@ -86,6 +105,14 @@ export class TimeOffRequestController {
     @Headers('x-role') role: string,
     @Body('reason') reason?: string,
   ): Promise<TimeOffRequest> {
+    if (!managerId) {
+      throw new BadRequestException('X-Employee-Id header is required.');
+    }
+    if (role !== 'employee' && role !== 'manager') {
+      throw new BadRequestException(
+        'X-Role header must be "employee" or "manager".',
+      );
+    }
     if (role !== 'manager') {
       throw new ForbiddenException('Only managers may reject requests.');
     }
@@ -101,8 +128,18 @@ export class TimeOffRequestController {
   async cancel(
     @Param('id', ParseUUIDPipe) requestId: string,
     @Headers('x-employee-id') principalId: string,
-    @Headers('x-role') _role: string,
+    @Headers('x-role') role: string,
   ): Promise<TimeOffRequest> {
+    if (!principalId) {
+      throw new BadRequestException('X-Employee-Id header is required.');
+    }
+    if (role !== 'employee' && role !== 'manager') {
+      throw new BadRequestException(
+        'X-Role header must be "employee" or "manager".',
+      );
+    }
+    // Cancel: principal may be the employee themselves OR a manager (§11).
+    // IDOR enforcement is deferred to the service, which checks ownership.
     return this.service.cancel(requestId, principalId);
   }
 }

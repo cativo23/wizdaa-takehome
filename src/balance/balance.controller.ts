@@ -5,6 +5,7 @@ import {
   Query,
   Body,
   Headers,
+  BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
 import { BalanceService } from './balance.service';
@@ -39,6 +40,14 @@ export class BalanceController {
     @Headers('x-employee-id') principalId: string,
     @Headers('x-role') role: string,
   ): Promise<Balance> {
+    if (!principalId) {
+      throw new BadRequestException('X-Employee-Id header is required.');
+    }
+    if (role !== 'employee' && role !== 'manager') {
+      throw new BadRequestException(
+        'X-Role header must be "employee" or "manager".',
+      );
+    }
     if (role !== 'manager' && query.employeeId !== principalId) {
       throw new ForbiddenException(
         'Employees may only query their own balance.',
@@ -54,8 +63,17 @@ export class BalanceController {
   @Patch('resolve-review')
   async resolveReview(
     @Body() body: ResolveReviewDto,
+    @Headers('x-employee-id') principalId: string,
     @Headers('x-role') role: string,
   ): Promise<{ ok: boolean }> {
+    if (!principalId) {
+      throw new BadRequestException('X-Employee-Id header is required.');
+    }
+    if (role !== 'employee' && role !== 'manager') {
+      throw new BadRequestException(
+        'X-Role header must be "employee" or "manager".',
+      );
+    }
     if (role !== 'manager') {
       throw new ForbiddenException('Only managers may resolve balance reviews.');
     }

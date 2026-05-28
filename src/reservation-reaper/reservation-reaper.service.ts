@@ -1,9 +1,10 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, LessThanOrEqual, In } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { TimeOffRequest } from '../entities/time-off-request.entity';
 import { Outbox } from '../entities/outbox.entity';
+import { RequestStatus } from '../entities/enums';
 import { BalanceLockService, balanceKey } from '../common/lock/balance-lock.service';
 import { TimeOffRequestService } from '../time-off-request/time-off-request.service';
 import { CLOCK } from '../common/clock/clock.tokens';
@@ -28,6 +29,8 @@ import type { Clock } from '../common/clock/clock.interface';
  */
 @Injectable()
 export class ReservationReaperService {
+  private readonly logger = new Logger(ReservationReaperService.name);
+
   constructor(
     @InjectRepository(TimeOffRequest)
     private readonly requestRepo: Repository<TimeOffRequest>,
@@ -45,9 +48,37 @@ export class ReservationReaperService {
    *
    * ADR-002: runs on a 5-minute schedule; reaper TTL defaults to 14 days.
    * E15/E24.
+   *
+   * Public so tests can trigger manually via FakeClock without waiting for
+   * the scheduler.
    */
   @Cron(CronExpression.EVERY_5_MINUTES)
   async sweep(): Promise<void> {
-    throw new Error('NotImplemented: ReservationReaperService.sweep');
+    const now = this.clock.now();
+
+    const expired = await this.requestRepo.find({
+      where: {
+        expiresAt: LessThanOrEqual(now),
+        status: In([RequestStatus.PENDING, RequestStatus.PENDING_SYNC]),
+      },
+    });
+
+    for (const req of expired) {
+      await this.lockService.runExclusive(
+        balanceKey(req.employeeId, req.locationId),
+        async () => {
+          try {
+            await this.timeOffRequestService.expire(req.id);
+          } catch (e) {
+            // Status may have changed between find() and expire() — e.g. cancelled
+            // or approved by a concurrent actor. Log the request ID only (no PHI)
+            // and continue so one failure does not abort the whole sweep.
+            this.logger.warn(
+              `sweep: expire skipped for request ${req.id} — ${(e as Error).message}`,
+            );
+          }
+        },
+      );
+    }
   }
 }
