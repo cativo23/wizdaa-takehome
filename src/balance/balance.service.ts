@@ -6,15 +6,22 @@ import { TimeOffRequest } from '../entities/time-off-request.entity';
 import { Outbox } from '../entities/outbox.entity';
 import { ReconciliationEvent } from '../entities/reconciliation-event.entity';
 import { HcmBalance } from '../hcm/contracts/hcm.types';
+import type { HcmClient } from '../hcm/contracts/hcm-client.interface';
+import { HCM_CLIENT } from '../hcm/hcm.tokens';
+import { HcmUnavailableError } from '../hcm/hcm.errors';
 import { BalanceLockService, balanceKey } from '../common/lock/balance-lock.service';
 import { CLOCK } from '../common/clock/clock.tokens';
 import type { Clock } from '../common/clock/clock.interface';
+import { AppConfigService } from '../config/app-config.service';
 import {
   RequestStatus,
   OutboxOperation,
   OutboxStatus,
   ReconResolution,
 } from '../entities/enums';
+
+/** Balance augmented with an optional ephemeral degraded flag (ADR-014). */
+type BalanceWithDegraded = Balance & { degraded?: boolean };
 
 /** Max number of optimistic-lock retries before we give up. */
 const MAX_OPTIMISTIC_RETRIES = 5;
@@ -45,6 +52,9 @@ export class BalanceService {
     private readonly lockService: BalanceLockService,
     @Inject(CLOCK)
     private readonly clock: Clock,
+    private readonly appConfig: AppConfigService,
+    @Inject(HCM_CLIENT)
+    private readonly hcmClient: HcmClient,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -141,24 +151,88 @@ export class BalanceService {
 
   /**
    * Read-only: return the current balance for (employeeId, locationId).
-   * Creates and persists a zero balance record if none exists yet.
-   * FR-1. No lock required.
+   *
+   * ADR-014 cold-read lazy hydration:
+   *  - Hot path (row exists AND lastHcmAsOf is non-null): return cached row immediately.
+   *    No lock, no HCM call.
+   *  - Feature-flag off (BALANCE_LAZY_LOAD_ENABLED=false): legacy zero-on-miss behavior.
+   *  - Cold path (row absent OR lastHcmAsOf null): acquire the balance-key lock, re-check
+   *    the condition (double-checked locking), call HCM once, and persist via
+   *    applyHcmSnapshot. On HcmUnavailableError, return an EPHEMERAL DTO with
+   *    degraded=true — nothing is persisted so the next call retries the bootstrap.
+   *
+   * FR-1.
    */
-  async getBalance(employeeId: string, locationId: string): Promise<Balance> {
-    const existing = await this.balanceRepo.findOne({
+  async getBalance(employeeId: string, locationId: string): Promise<BalanceWithDegraded> {
+    const row = await this.balanceRepo.findOne({
       where: { employeeId, locationId },
     });
-    if (existing) return existing;
 
-    const fresh = this.balanceRepo.create({
-      employeeId,
-      locationId,
-      available: 0,
-      reserved: 0,
-      needsReview: false,
-      lastHcmAsOf: null,
+    // Hot path: cache warm — row exists and has been synced at least once.
+    // Must NOT acquire the lock and must NOT call HCM (ADR-014).
+    if (row !== null && row.lastHcmAsOf !== null) {
+      return row;
+    }
+
+    // Feature-flag rollback: legacy zero-on-miss behavior for production rollback.
+    if (!this.appConfig.balanceLazyLoadEnabled) {
+      if (row !== null) return row;
+      const fresh = this.balanceRepo.create({
+        employeeId,
+        locationId,
+        available: 0,
+        reserved: 0,
+        needsReview: false,
+        lastHcmAsOf: null,
+      });
+      return this.balanceRepo.save(fresh);
+    }
+
+    // Cold path: row is absent or lastHcmAsOf is null.
+    // Acquire the balance-key lock to prevent stampede (ADR-010).
+    return this.lockService.runExclusive(balanceKey(employeeId, locationId), async () => {
+      // Double-checked locking: re-read inside the lock in case another caller
+      // already hydrated the row while we were waiting to acquire the lock.
+      const fresh = await this.balanceRepo.findOne({
+        where: { employeeId, locationId },
+      });
+      if (fresh !== null && fresh.lastHcmAsOf !== null) {
+        return fresh; // Another caller already hydrated. Cache warm now.
+      }
+
+      // Still cold — perform a single HCM read.
+      let snapshot;
+      try {
+        snapshot = await this.hcmClient.getBalance(employeeId, locationId);
+      } catch (err) {
+        if (err instanceof HcmUnavailableError) {
+          // CRITICAL: do NOT persist anything. Return an ephemeral DTO so the
+          // next request retries the cold-load (no cached wrong answer — ADR-014).
+          const now = this.clock.now();
+          const ephemeral = Object.assign(new Balance(), {
+            employeeId,
+            locationId,
+            available: 0,
+            reserved: 0,
+            needsReview: false,
+            version: 0,
+            lastHcmAsOf: null,
+            createdAt: now,
+            updatedAt: now,
+            degraded: true,
+          }) as BalanceWithDegraded;
+          return ephemeral;
+        }
+        throw err;
+      }
+
+      // Success — persist the snapshot via the existing applyHcmSnapshot path.
+      // Caller already holds the lock so this is safe (no re-entrancy issue).
+      await this.applyHcmSnapshot(snapshot);
+      return (await this.balanceRepo.findOne({
+        where: { employeeId, locationId },
+      })) as Balance;
     });
-    return this.balanceRepo.save(fresh);
   }
 
   /**

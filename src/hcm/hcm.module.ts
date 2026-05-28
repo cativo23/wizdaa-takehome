@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { HcmClientService } from './hcm-client.service';
@@ -23,7 +23,7 @@ import { BalanceModule } from '../balance/balance.module';
   imports: [
     HttpModule,
     TypeOrmModule.forFeature([Outbox, TimeOffRequest, Balance]),
-    BalanceModule,
+    forwardRef(() => BalanceModule),
   ],
   providers: [
     {

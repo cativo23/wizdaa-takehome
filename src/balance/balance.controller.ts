@@ -13,6 +13,9 @@ import { GetBalanceDto } from './dto/get-balance.dto';
 import { ResolveReviewDto } from './dto/resolve-review.dto';
 import { Balance } from '../entities/balance.entity';
 
+/** Balance shape that may carry the ephemeral ADR-014 degraded flag. */
+type BalanceResponse = Balance & { degraded?: boolean };
+
 /**
  * BalanceController — thin HTTP boundary for balance operations.
  *
@@ -39,7 +42,7 @@ export class BalanceController {
     @Query() query: GetBalanceDto,
     @Headers('x-employee-id') principalId: string,
     @Headers('x-role') role: string,
-  ): Promise<Balance> {
+  ): Promise<BalanceResponse> {
     if (!principalId) {
       throw new BadRequestException('X-Employee-Id header is required.');
     }

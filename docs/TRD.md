@@ -359,6 +359,18 @@ overlap; partial-accept silently mutates intent.
 **Consequences:** Correct under double-click, boundary-touch, and concurrent disjoint requests. Cost: an overlap
 query per submit under the lock.
 
+### ADR-014 — Cold-read lazy hydration from HCM
+**Status:** Accepted
+**Context:** `GET /balances` for a fresh `(employeeId, locationId)` returns `{ available: 0, lastHcmAsOf: null }` because the local row is auto-created with zeros (FR-1) and no sync has run. The realtime endpoint exists (§8), HCM holds the true value, and the PDF persona explicitly expects an *accurate* balance on first read. A1 assumes HCM has pushed a corpus before the first user-facing read, but the assumption holds only in steady state — on a freshly provisioned tuple, the first read precedes the next batch and may also precede any approve, so the employee sees `0` and any submit is rejected for "insufficient balance" against a value the service never had authority to assert.
+**Decision:** On `BalanceService.getBalance`, when the local row is absent OR has `lastHcmAsOf === null`, acquire the balance-key lock (ADR-010) and re-check the condition; if still cold, call `hcmClient.getBalance` once and route the result through the existing `applyHcmSnapshot` path. Subsequent reads (`lastHcmAsOf !== null`) bypass the lock and the HCM call entirely. On `HcmUnavailableError`, do **not** persist anything — return an ephemeral zero row with `degraded: true` so the next request retries the bootstrap. Gated by `BALANCE_LAZY_LOAD_ENABLED` (default `true`) for production rollback. The lazy-load fires **only** on cold cache; ongoing freshness remains the job of the batch corpus (ADR-003) and the per-approve refresh (ADR-001). No TTL refresh on the read path.
+**Alternatives:**
+- Always passthrough on read — couples every page-load to HCM uptime and inflates call volume; violates ADR-001's local-primary spirit on the read path.
+- TTL refresh on read — solves cold-read but smuggles in a new staleness contract and tunable; deferred.
+- Bootstrap-via-provisioning — relies on infrastructure outside this service's scope and unverifiable in the deliverable.
+- Docs-only (extend A1) — does not change observable behaviour; a strict reviewer dings the `available: 0` first-read regardless.
+- Persist zero with `stale` header on HCM-down — re-introduces the original bug (cached wrong answer persists across requests).
+**Consequences:** Cold-read accuracy under normal operation; one HCM read per `(emp, loc)` tuple per cold-start (amortised to zero); degraded mode is observable, transient, and self-healing. The lazy-load writes inside the balance-key lock and re-checks the condition under it to prevent stampede on the same key. Cost: one branch in `getBalance`, one config flag, one DTO field, and the discipline that cold-load failure must not persist.
+
 ### ADR-013 — Transactional outbox over external broker; single-transaction atomicity
 **Status:** Accepted
 **Context:** ADR-011 chose a transactional outbox to make reserve-then-file durable across a
@@ -533,6 +545,7 @@ responsibilities at its own boundary:
 
 ## 14. Changelog
 
+- **v3.2** — ADR-014 added; BalanceService.getBalance now lazy-hydrates from HCM on cold cache via double-checked locking; gated by BALANCE_LAZY_LOAD_ENABLED.
 - **v3.1** — ADR-013 added; balance arithmetic corrected to the §6 effects-list model (A1); reconcile filters
   fixed for PENDING_SYNC (A3); reject/expire branch on status to call restore for PENDING_SYNC (A4);
   BalanceService mutators accept optional EntityManager so balance + request + outbox writes commit in one

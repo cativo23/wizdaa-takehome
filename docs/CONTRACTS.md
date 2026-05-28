@@ -192,14 +192,15 @@ Both tokens are plain strings (`'CLOCK'`, `'HCM_CLIENT'`).
 
 All properties are getters — read from `ConfigService`, never throw.
 
-| Getter               | Type   | Default                     | Env var                  |
-|----------------------|--------|-----------------------------|--------------------------|
-| databasePath         | string | `/app/data/timeoff.sqlite`  | `DATABASE_PATH`          |
-| hcmBaseUrl           | string | `http://localhost:3001`     | `HCM_BASE_URL`           |
-| reservationTtlDays   | number | `14`                        | `RESERVATION_TTL_DAYS`   |
-| hcmRetryMaxAttempts  | number | `5`                         | `HCM_RETRY_MAX_ATTEMPTS` |
-| hcmRetryBackoffMs    | number | `1000`                      | `HCM_RETRY_BACKOFF_MS`   |
-| port                 | number | `3000`                      | `PORT`                   |
+| Getter                  | Type    | Default                     | Env var                       |
+|-------------------------|---------|-----------------------------|-------------------------------|
+| databasePath            | string  | `/app/data/timeoff.sqlite`  | `DATABASE_PATH`               |
+| hcmBaseUrl              | string  | `http://localhost:3001`     | `HCM_BASE_URL`                |
+| reservationTtlDays      | number  | `14`                        | `RESERVATION_TTL_DAYS`        |
+| hcmRetryMaxAttempts     | number  | `5`                         | `HCM_RETRY_MAX_ATTEMPTS`      |
+| hcmRetryBackoffMs       | number  | `1000`                      | `HCM_RETRY_BACKOFF_MS`        |
+| port                    | number  | `3000`                      | `PORT`                        |
+| balanceLazyLoadEnabled  | boolean | `true`                      | `BALANCE_LAZY_LOAD_ENABLED`   |
 
 ---
 
@@ -399,7 +400,7 @@ All methods: retry with exponential backoff up to `hcmRetryMaxAttempts` (ADR-004
 
 | Method              | Signature                                                                      | Intended behavior + ADRs                                                                                                                                                                              |
 |---------------------|--------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| getBalance          | `(employeeId, locationId) → Promise<Balance>`                                  | Read-only. Creates zero record on first access. FR-1.                                                                                                                                                 |
+| getBalance          | `(employeeId, locationId) → Promise<Balance & { degraded?: boolean }>`         | Read-only. On first access for `(emp,loc)` (`lastHcmAsOf` null), acquires the balance-key lock and lazy-hydrates from HCM via `applyHcmSnapshot`. On `HcmUnavailableError`, returns an ephemeral `{ degraded: true }` DTO without persisting (next call retries). Gated by `BALANCE_LAZY_LOAD_ENABLED`. ADR-014. FR-1.  |
 | validateAvailability| `(employeeId, locationId, days) → Promise<void>`                               | Throws ConflictException if `available - reserved < days`. Used for instant feedback at submit (ADR-001 local guard). No mutation.                                                                    |
 | reserve             | `(employeeId, locationId, days, manager?: EntityManager) → Promise<void>`      | `reserved += days` only. `available` is NOT decremented here — only at commit. Double-check under lock: throws if `available - reserved < days`. ADR-002.                                            |
 | release             | `(employeeId, locationId, days, manager?: EntityManager) → Promise<void>`      | `reserved -= days` (floored at 0). Called on REJECTED/EXPIRED/cancel of PENDING. Under lock.                                                                                                         |

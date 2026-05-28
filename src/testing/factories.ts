@@ -45,6 +45,10 @@ export interface SeedBalanceOptions {
   available?: number;
   reserved?: number;
   needsReview?: boolean;
+  /**
+   * Defaults to 2026-05-27T00:00:00Z (a warm row — ADR-014 hot path).
+   * Pass `null` explicitly when you need to test cold-cache hydration.
+   */
   lastHcmAsOf?: Date | null;
 }
 
@@ -62,7 +66,10 @@ export async function seedBalance(
     available: opts.available ?? 10,
     reserved: opts.reserved ?? 0,
     needsReview: opts.needsReview ?? false,
-    lastHcmAsOf: opts.lastHcmAsOf !== undefined ? opts.lastHcmAsOf : null,
+    // Default to a warm row so integration tests (which seed DB state and test
+    // lifecycle, not cold-read hydration) hit the ADR-014 hot path and don't
+    // accidentally trigger an HCM call. Pass null explicitly to test cold-read.
+    lastHcmAsOf: opts.lastHcmAsOf !== undefined ? opts.lastHcmAsOf : new Date('2026-05-27T00:00:00Z'),
   });
   return repo.save(entity);
 }

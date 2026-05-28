@@ -65,8 +65,9 @@ describe('BalanceService.getBalance — creates zero record on first access', ()
   });
 
   it('returns the existing row on second call (no duplicate inserts)', async () => {
-    // Pre-seed
-    await seedBalance(balanceRepo, { available: 5 });
+    // Pre-seed with a warm row (lastHcmAsOf set) — ADR-014 hot path:
+    // a row with lastHcmAsOf !== null is returned directly without an HCM call.
+    await seedBalance(balanceRepo, { available: 5, lastHcmAsOf: new Date('2026-05-01T00:00:00Z') });
 
     const result = await balanceSvc.getBalance('emp1', 'loc1');
 

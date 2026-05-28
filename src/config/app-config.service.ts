@@ -33,4 +33,14 @@ export class AppConfigService {
   get port(): number {
     return this.config.get<number>('PORT', 3000);
   }
+
+  /**
+   * When true (default), getBalance lazy-hydrates a cold cache from HCM on
+   * first access (ADR-014). Set BALANCE_LAZY_LOAD_ENABLED=false to revert to
+   * the legacy zero-row-on-miss behaviour for production rollback.
+   */
+  get balanceLazyLoadEnabled(): boolean {
+    const raw = this.config.get<string>('BALANCE_LAZY_LOAD_ENABLED', 'true');
+    return raw !== 'false' && raw !== '0';
+  }
 }
