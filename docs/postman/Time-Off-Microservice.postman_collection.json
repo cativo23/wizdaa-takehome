@@ -1,0 +1,534 @@
+{
+  "info": {
+    "_postman_id": "8a3c2f10-7d9f-4f1b-9b5a-4b1e5c6a7d8e",
+    "name": "Time-Off Microservice — Wizdaa Take-Home",
+    "description": "# Time-Off Microservice\n\nA defensive time-off lifecycle service backed by NestJS + SQLite that syncs balances with an unreliable HCM source-of-truth over an at-least-once network. See `docs/TRD.md` for the full design (v3) and `docs/CONTRACTS.md` for the frozen interface spec.\n\n## How to use this collection\n\n1. Start the stack: `docker compose up --build` (app on `:3000`, mock HCM on `:3001`).\n2. Seed the mock HCM with a starting balance — **Mock HCM Controls → Refresh HCM balance** (default seeds `emp1/loc1 → 20` days).\n3. Walk through **Guided Scenarios** in order — each one references requests from folders 1–5.\n\n## Auth model\n\nThis service assumes an upstream gateway has authenticated the caller and injected:\n\n- `X-Employee-Id` — the principal's employee ID (trusted)\n- `X-Role` — `employee` or `manager`\n\nThe collection variables `employee_id`, `manager_id`, and `role` are wired into every header by default. Switch `role` to `manager` for manager-only routes (approve, reject, resolve-review).\n\n## Idempotency\n\n`POST /time-off-requests` requires an `Idempotency-Key` header (UUID). The collection pre-request script generates a fresh one for each submit. Replay the same submit with the same key to verify idempotent behavior (ADR-012).\n\n## State machine cheat-sheet\n\n```\nDRAFT ─submit─► PENDING ─approve─► PENDING_SYNC ─FILE ack─► APPROVED\n                  │                     │ └─retry cap─► REVERSE ► REJECTED\n                  │                     └─cancel─► CANCELLED (+ REVERSE if FILE sent)\n                  ├─reject───────────► REJECTED\n                  └─TTL (reaper)─────► EXPIRED\nAPPROVED ─cancel─► CANCELLED (+ REVERSE)\n```\n\nUnder the **Pure Outbox** model (ADR-013), `approve` always lands in `PENDING_SYNC` first; the dispatcher promotes to `APPROVED` on the FILE ack from HCM.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Setup & Health",
+      "description": "Sanity checks before walking through scenarios. Use these to confirm both services are up and reachable.",
+      "item": [
+        {
+          "name": "App — Health (GET /)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/",
+              "host": ["{{base_url}}"],
+              "path": [""]
+            },
+            "description": "Returns `{ status: 'ok' }` when the app is up. Used by the Docker healthcheck."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status: ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mock HCM — Ready check (GET /_control/batch)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{hcm_url}}/_control/batch",
+              "host": ["{{hcm_url}}"],
+              "path": ["_control", "batch"]
+            },
+            "description": "Returns the batch corpus the mock HCM would emit next. Doubles as a liveness probe for the mock — also used by its Docker healthcheck."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Corpus has sequence + asOf + balances', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('sequence');",
+                  "  pm.expect(j).to.have.property('asOf');",
+                  "  pm.expect(j).to.have.property('balances');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Employee Workflow",
+      "description": "All requests here use `X-Role: employee` and `X-Employee-Id: {{employee_id}}`. An employee may only act on their **own** records — IDOR is enforced server-side (§12).",
+      "item": [
+        {
+          "name": "View own balance (GET /balances)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+              {"key": "X-Role", "value": "employee"}
+            ],
+            "url": {
+              "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["balances"],
+              "query": [
+                {"key": "employeeId", "value": "{{employee_id}}"},
+                {"key": "locationId", "value": "{{location_id}}"}
+              ]
+            },
+            "description": "Returns the current `Balance` row for `(employee_id, location_id)`. Creates a zero record on first access. Response fields: `available`, `reserved`, `needsReview`, `lastHcmAsOf`, `version`.\n\nUnder Model A: `available` mirrors HCM's free-days view; `reserved` = days held by PENDING requests."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has available/reserved fields', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('available');",
+                  "  pm.expect(j).to.have.property('reserved');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Submit time-off (POST /time-off-requests)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Generate a fresh Idempotency-Key for each submit (ADR-012).",
+                  "// Re-running the SAME request without changing the key will replay (E8).",
+                  "// Override by setting `idempotency_key` in collection variables to test replay.",
+                  "if (!pm.collectionVariables.get('reuse_idempotency_key') || pm.collectionVariables.get('reuse_idempotency_key') === 'false') {",
+                  "  const uuid = (typeof crypto !== 'undefined' && crypto.randomUUID)",
+                  "    ? crypto.randomUUID()",
+                  "    : 'idem-' + Date.now() + '-' + Math.random().toString(36).slice(2);",
+                  "  pm.collectionVariables.set('idempotency_key', uuid);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201 or 200', () => pm.expect([200, 201]).to.include(pm.response.code));",
+                  "pm.test('Response has id', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.id).to.be.a('string');",
+                  "  pm.collectionVariables.set('request_id', j.id);",
+                  "});",
+                  "pm.test('Status starts at PENDING', () => {",
+                  "  pm.expect(pm.response.json().status).to.eql('PENDING');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+              {"key": "X-Role", "value": "employee"},
+              {"key": "Idempotency-Key", "value": "{{idempotency_key}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"startDate\": \"2026-06-01\",\n  \"endDate\": \"2026-06-02\"\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/time-off-requests",
+              "host": ["{{base_url}}"],
+              "path": ["time-off-requests"]
+            },
+            "description": "Submit a time-off request (ADR-012). The server computes `days` from the inclusive date range, excluding weekends (location calendar is stubbed for v1 per A6).\n\n**Headers**\n- `X-Employee-Id` — must match the body's `employeeId` (IDOR check, §12)\n- `X-Role: employee`\n- `Idempotency-Key` — UUID; replays return the SAME request if active (E8); 422 on key reuse with a different body (E23)\n\n**Body**\n- `employeeId`, `locationId`, `startDate` (YYYY-MM-DD inclusive), `endDate` (YYYY-MM-DD inclusive)\n- **No `days` field** — server-computed (§12)\n\n**Responses**\n- `201` — request created in `PENDING`, `reserved += days` on the balance\n- `409` — insufficient balance OR overlap with an existing active request (E1, E19, E20)\n- `422` — idempotency-key reuse with a different body (E23)\n\nThe test script captures the new request `id` into `request_id` for subsequent approve/reject/cancel calls."
+          }
+        },
+        {
+          "name": "Cancel own request (POST /time-off-requests/:id/cancel)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+              {"key": "X-Role", "value": "employee"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{}", "options": {"raw": {"language": "json"}}},
+            "url": {
+              "raw": "{{base_url}}/time-off-requests/{{request_id}}/cancel",
+              "host": ["{{base_url}}"],
+              "path": ["time-off-requests", "{{request_id}}", "cancel"]
+            },
+            "description": "Cancel the captured request (`request_id`). Behavior depends on current status:\n\n- **PENDING** → void pending FILE outbox + `release` (reserved -= days) → `CANCELLED`\n- **PENDING_SYNC** (FILE not sent) → void FILE + `restore` (available += days) → `CANCELLED`\n- **PENDING_SYNC** (FILE already SENT) → `restore` + enqueue REVERSE → `CANCELLED` (E27)\n- **APPROVED** → `restore` + enqueue REVERSE → `CANCELLED` (E9, FR-6)\n- already **CANCELLED** → no-op (idempotent)\n\nA manager can cancel any request; an employee can only cancel their own (IDOR)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200/201', () => pm.expect([200, 201]).to.include(pm.response.code));",
+                  "pm.test('Final status is CANCELLED', () => pm.expect(pm.response.json().status).to.eql('CANCELLED'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Manager Workflow",
+      "description": "Manager-only routes: approve, reject, resolve-review. All use `X-Role: manager`. The `X-Employee-Id` header here is the **manager's** ID — IDOR for the target employee is handled inside the service.",
+      "item": [
+        {
+          "name": "Approve request (POST /time-off-requests/:id/approve)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Employee-Id", "value": "{{manager_id}}"},
+              {"key": "X-Role", "value": "manager"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{}", "options": {"raw": {"language": "json"}}},
+            "url": {
+              "raw": "{{base_url}}/time-off-requests/{{request_id}}/approve",
+              "host": ["{{base_url}}"],
+              "path": ["time-off-requests", "{{request_id}}", "approve"]
+            },
+            "description": "Approve a PENDING request (ADR-001).\n\n**Approve sequence** under the **Pure Outbox** model (ADR-013):\n1. GET HCM realtime balance (best-effort; if HCM is unreachable → proceed on local cache per ADR-001).\n2. `applyHcmSnapshot` — set local `available = hcmValue`.\n3. Re-validate locally: if `available < days` → REJECTED + `release` (E10).\n4. Past-date check — if `startDate < now` (location-tz civil date) → REJECTED + `release` (E18).\n5. In one transaction: `commit` (available -= days, reserved -= days), write `Outbox(FILE, PENDING)`, status → **PENDING_SYNC**.\n\nThe dispatcher promotes `PENDING_SYNC → APPROVED` once HCM acks the FILE (E4 happy). On retry-cap, the dispatcher fires the compensating REVERSE path (E5)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200/201', () => pm.expect([200, 201]).to.include(pm.response.code));",
+                  "pm.test('Request transitioned to PENDING_SYNC (Pure Outbox)', () => {",
+                  "  const j = pm.response.json();",
+                  "  // Happy path under Pure Outbox: approve always lands in PENDING_SYNC;",
+                  "  // dispatcher (5s @Interval) promotes to APPROVED on FILE ack.",
+                  "  pm.expect(['PENDING_SYNC', 'APPROVED', 'REJECTED']).to.include(j.status);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reject request (POST /time-off-requests/:id/reject)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Employee-Id", "value": "{{manager_id}}"},
+              {"key": "X-Role", "value": "manager"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Conflicts with team coverage window\"\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/time-off-requests/{{request_id}}/reject",
+              "host": ["{{base_url}}"],
+              "path": ["time-off-requests", "{{request_id}}", "reject"]
+            },
+            "description": "Reject a PENDING or PENDING_SYNC request.\n\n- **PENDING** → `release` (reserved -= days) → REJECTED\n- **PENDING_SYNC** → void pending FILE + `restore` (available += days, the commit is undone) → REJECTED\n\n`reason` is accepted but not persisted in v1 (extensibility seam)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200/201', () => pm.expect([200, 201]).to.include(pm.response.code));",
+                  "pm.test('Final status is REJECTED', () => pm.expect(pm.response.json().status).to.eql('REJECTED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resolve review (PATCH /balances/resolve-review)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "X-Employee-Id", "value": "{{manager_id}}"},
+              {"key": "X-Role", "value": "manager"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\"\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/balances/resolve-review",
+              "host": ["{{base_url}}"],
+              "path": ["balances", "resolve-review"]
+            },
+            "description": "Clear `Balance.needsReview` on a flagged balance (B4 / ADR-003).\n\nWhen reconciliation drives `available` negative, the balance is flagged with `needsReview=true` and a `FLAGGED_NEGATIVE` event is emitted (E26). After the manager investigates and accepts the divergence (or manually adjusts), they call this endpoint to clear the flag.\n\nManager-only. This is the ONE BalanceService method that acquires the per-balance-key lock itself."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200/204', () => pm.expect([200, 204]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. HCM Batch Sync",
+      "description": "The HCM → service push (§8). HCM emits a full balance corpus periodically (or on events like year-start); the service reconciles each balance against the snapshot under ADR-003's algorithm.",
+      "item": [
+        {
+          "name": "Ingest HCM batch corpus (POST /timeoff/hcm/batch)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sequence\": 1,\n  \"asOf\": \"2026-06-15T00:00:00.000Z\",\n  \"balances\": [\n    {\n      \"employeeId\": \"{{employee_id}}\",\n      \"locationId\": \"{{location_id}}\",\n      \"balance\": 18,\n      \"asOf\": \"2026-06-15T00:00:00.000Z\"\n    }\n  ]\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/timeoff/hcm/batch",
+              "host": ["{{base_url}}"],
+              "path": ["timeoff", "hcm", "batch"]
+            },
+            "description": "Ingest a batch corpus from HCM (ADR-009 + ADR-003).\n\n**Sequence guard (ADR-009):** `sequence` must be strictly greater than the last applied sequence. A stale or out-of-order batch is rejected and audited with a single `STALE_REJECTED` reconciliation event (E13).\n\n**Per-balance reconcile (ADR-003):** for each entry, under the per-balance-key lock:\n- base `available = entry.balance`\n- subtract days for any `APPROVED` or `PENDING_SYNC` request whose `hcmAckAt` is NULL or > `asOf` (snapshot misses these)\n- add days for any pending REVERSE outbox row whose linked request is `CANCELLED`\n- `reserved` recomputed from current `PENDING` requests only\n- if final `available < 0` → set `needsReview = true` + emit `FLAGGED_NEGATIVE` (E26)\n\nIn production this endpoint would require a service token. In v1 it's open by design (commented in the controller).\n\n**Bump `sequence` between runs!** The service rejects any sequence ≤ the last applied one."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200/201/202', () => pm.expect([200, 201, 202]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Mock HCM Controls",
+      "description": "Test-control surface on the mock HCM (`:3001`). These endpoints exist ONLY in the mock — in a real deployment the `mock-hcm` service is dropped and the real HCM has no `_control/*` routes (§12).\n\nUse these to:\n- Set HCM-side starting balance (`/_control/refresh`)\n- Switch behavior between scenarios (`/_control/scenario`)\n- Preview or emit a batch corpus (`/_control/batch`, `/_control/emit-batch`)\n- Directly inspect HCM-side state (`GET /hcm/balance`)",
+      "item": [
+        {
+          "name": "Seed / refresh HCM balance (POST /_control/refresh)",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"balance\": 20\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{hcm_url}}/_control/refresh",
+              "host": ["{{hcm_url}}"],
+              "path": ["_control", "refresh"]
+            },
+            "description": "Overwrite an HCM-side balance with a new value (and refresh `asOf` to now). Simulates a year-start refresh or work-anniversary bonus, making E7 / E10 / E26 scenarios deterministic.\n\nRun this once at the start of a session to seed a known balance, e.g. `{ balance: 20 }`."
+          }
+        },
+        {
+          "name": "Set scenario (POST /_control/scenario)",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scenario\": \"correct\"\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{hcm_url}}/_control/scenario",
+              "host": ["{{hcm_url}}"],
+              "path": ["_control", "scenario"]
+            },
+            "description": "Switch the mock's behavior. ADR-007 scenarios:\n\n| Scenario | Effect |\n|---|---|\n| `correct` | Normal semantics; idempotency dedup applies. |\n| `silent-insufficient` | `POST /hcm/timeoff` returns 200 even on insufficient balance, WITHOUT deducting (E3). |\n| `timeout` | All `/hcm/*` calls fail (503) — exercises the dispatcher retry / retry-cap path. |\n| `mutate-between-calls` | Each `GET /hcm/balance` decrements by 1 — exercises E10. |\n| `divergent-batch` | Batch corpus reports each balance 3 below the real value (E6). |\n| `duplicate-delivery` | Behaves like `correct` (idempotency-key dedup still holds; E11/E16). |\n| `ignore-idempotency-key` | Skips dedup table — proves the service's local guard holds even when HCM ignores ADR-008. |"
+          }
+        },
+        {
+          "name": "Preview batch corpus (GET /_control/batch)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{hcm_url}}/_control/batch",
+              "host": ["{{hcm_url}}"],
+              "path": ["_control", "batch"]
+            },
+            "description": "Return the corpus the mock WOULD emit next. Non-destructive (does NOT advance the sequence counter). Useful for inspecting state before triggering a real ingest."
+          }
+        },
+        {
+          "name": "Emit batch to service (POST /_control/emit-batch)",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUrl\": \"http://app:3000/timeoff/hcm/batch\"\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{hcm_url}}/_control/emit-batch",
+              "host": ["{{hcm_url}}"],
+              "path": ["_control", "emit-batch"]
+            },
+            "description": "Build a fresh corpus (advancing the sequence counter) and POST it to `targetUrl`. The default uses the Docker network hostname `app:3000` — if you're calling Postman from outside Docker, swap it for `http://host.docker.internal:3000` or `http://localhost:3000` depending on how your Docker daemon resolves the host.\n\nOptional overrides: `balances`, `asOf`, `sequence`."
+          }
+        },
+        {
+          "name": "Direct: get HCM balance (GET /hcm/balance)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{hcm_url}}/hcm/balance?employeeId={{employee_id}}&locationId={{location_id}}",
+              "host": ["{{hcm_url}}"],
+              "path": ["hcm", "balance"],
+              "query": [
+                {"key": "employeeId", "value": "{{employee_id}}"},
+                {"key": "locationId", "value": "{{location_id}}"}
+              ]
+            },
+            "description": "Inspect the HCM-side balance directly (debugging / cross-checking). The service never calls this from Postman — the HcmClient does — but it's useful to verify HCM-side state after a FILE or REVERSE has landed."
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Guided Scenarios",
+      "description": "Walkthroughs that exercise key E-matrix flows end-to-end. Each scenario lists the requests to run in order and what to verify at each step. Folders 1–5 hold the actual reusable requests — these notes glue them together.\n\nReset between scenarios by running **Mock HCM Controls → Seed / refresh HCM balance** with your starting value, and the **DELETE volumes** Docker step if you want a fresh DB (`docker compose down -v && docker compose up -d`).",
+      "item": [
+        {
+          "name": "A — Happy path (submit → approve → APPROVED)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
+            "description": "## A — Happy path\n\nDemonstrates the canonical lifecycle through the Pure Outbox dispatcher.\n\n1. **Setup → Mock HCM Controls → Seed / refresh HCM balance** with `balance: 20`.\n2. **Employee Workflow → View own balance** — expect `available=0, reserved=0` (first read auto-creates a zero row).\n3. **Mock HCM Controls → Set scenario** with `correct`.\n4. **Employee Workflow → Submit time-off** — request lands `PENDING`, `reserved=2`.\n5. **Employee Workflow → View own balance** — expect `available=0, reserved=2`.\n6. **Manager Workflow → Approve request** — server commits locally, writes outbox FILE, status → **PENDING_SYNC**. The collection's test script accepts PENDING_SYNC or APPROVED depending on dispatcher timing.\n7. Wait ~5s (or run multiple GETs) for the dispatcher's `@Interval(5000)` to fire — it sends the FILE to mock HCM and promotes status to **APPROVED**.\n8. **Employee Workflow → View own balance** — expect `available` dropped by 2 (Model A: commit reduced available).\n9. **Mock HCM Controls → Direct: get HCM balance** — expect HCM-side balance is 18 (the FILE landed and deducted).\n\nThe `GET /` body of this request is a placeholder so Postman lets you click 'Send' on a guide; the real action is in the description above."
+          }
+        },
+        {
+          "name": "B — Insufficient balance at submit (E1)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
+            "description": "## B — E1 Insufficient at submit\n\n1. **Mock HCM → Refresh** with `balance: 2` (small).\n2. **Mock HCM → Set scenario** `correct`.\n3. Edit **Submit time-off** to span a long range (e.g. `startDate: 2026-06-01`, `endDate: 2026-06-30` → ~22 business days).\n4. **Submit** — expect **409 Conflict** with a message about `available − reserved < days`.\n5. **View balance** — no reservation occurred (balance unchanged).\n\nThe local guard (`available − reserved < days`) rejects before any HCM call. ADR-001 / E1."
+          }
+        },
+        {
+          "name": "C — Duplicate submit (idempotency replay) (E8)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
+            "description": "## C — E8 Idempotent replay\n\n1. **Mock HCM → Refresh** with `balance: 20`.\n2. Set collection variable `reuse_idempotency_key = true` (forces the pre-request script to reuse the existing `idempotency_key`).\n3. **Submit time-off** — captures `request_id` and an `idempotency_key`.\n4. **Submit** again WITHOUT changing the body — expect the SAME `id` is returned. `reserved` did NOT double.\n5. Now change the date range in the body and **Submit** again with the same key — expect **422 Unprocessable** (key-reuse-with-different-body, E23).\n6. Set `reuse_idempotency_key = false` to restore fresh-UUID behavior."
+          }
+        },
+        {
+          "name": "D — Boundary overlap (E20)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
+            "description": "## D — E20 Boundary-touching ranges collide\n\n1. **Refresh** balance to 20; scenario `correct`.\n2. **Submit** `startDate=2026-06-02, endDate=2026-06-03`. Expect PENDING.\n3. Set `reuse_idempotency_key = false` (so a NEW key is generated).\n4. **Submit** with the same `{{employee_id}}/{{location_id}}` but `startDate=2026-06-03, endDate=2026-06-04`. Expect **409 Conflict** — the inclusive overlap predicate catches the shared June 3.\n\nADR-012 ②. Boundary-touching ranges are rejected, not silently trimmed."
+          }
+        },
+        {
+          "name": "E — Cancel approved request → REVERSE (E9)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
+            "description": "## E — E9 Cancel approved\n\n1. Walk through scenario **A** so a request reaches `APPROVED` and HCM-side balance is debited (e.g. 18).\n2. **Employee Workflow → Cancel** the captured `request_id`. Status → `CANCELLED`. `available += days`. A REVERSE outbox row is enqueued with key `{hcmIdempotencyKey}:REVERSE`.\n3. Wait ~5s for the dispatcher to send the REVERSE.\n4. **Mock HCM → Direct: get HCM balance** — expect balance back at 20 (REVERSE credited the days back at HCM).\n\nIdempotency: the REVERSE key is suffixed, so HCM cannot conflate it with the FILE."
+          }
+        },
+        {
+          "name": "F — Reconcile anniversary bonus (E7)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
+            "description": "## F — E7 Anniversary bonus via batch\n\n1. **Refresh** HCM with `balance: 30` (bonus added).\n2. **HCM Batch Sync → Ingest** with `sequence` greater than any previously sent (use `2`, `3`, … as you experiment) and `balances[].balance = 30`.\n3. **View own balance** — expect `available = 30` minus any local unacked deductions. Pending requests intact in `reserved`.\n\nADR-003 + ADR-009. PENDING reservations are NOT subtracted from the HCM base because HCM doesn't know about them; they only affect `reserved`."
+          }
+        },
+        {
+          "name": "G — HCM timeout at approve (E4)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
+            "description": "## G — E4 HCM timeout at approve\n\n1. **Refresh** HCM balance to 20.\n2. **Mock HCM → Set scenario** `timeout`.\n3. **Submit** (lands PENDING).\n4. **Approve** — status → **PENDING_SYNC**, the outbox FILE row is `PENDING`. Local balance committed (available -= days).\n5. Wait — the dispatcher tries every 5s. Each retry fails (`hcm.callsTo.fileTimeOff` increments in the mock). After `HCM_RETRY_MAX_ATTEMPTS` (5) failures, the **retry-cap compensation path** fires:\n   - outbox FILE → `FAILED`\n   - `restore` (available += days)\n   - status → `REJECTED`\n   - new REVERSE outbox row enqueued\n6. **Set scenario** back to `correct`. The REVERSE outbox row gets sent next tick → idempotent no-op at HCM (no FILE landed).\n\nADR-004 / E5. The whole flow is non-blocking from the user's perspective."
+          }
+        },
+        {
+          "name": "H — Reconcile drives balance negative (E26)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
+            "description": "## H — E26 Year-start drop → needsReview\n\n1. Walk through **A** so a request is APPROVED locally (`available = 18`).\n2. **Refresh** HCM with `balance: 2` (simulating a year-start drop AFTER the local approval).\n3. **Ingest batch** with the new `balance: 2` and `sequence` greater than the last.\n4. The reconcile algorithm computes `2 − 2 (unacked APPROVED) = 0` — or negative if the local commit hadn't acked yet. If negative, `needsReview = true` and a `FLAGGED_NEGATIVE` event is emitted.\n5. **View own balance** — observe `needsReview: true`.\n6. **Manager → Resolve review** — clears the flag.\n\nB4 / ADR-003. The system never silently goes negative; a human must adjudicate."
+          }
+        },
+        {
+          "name": "I — Reservation TTL expiry (E15)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
+            "description": "## I — E15 Reaper reclaims stale reservation\n\nThe reaper runs every 5 minutes (`@Cron(EVERY_5_MINUTES)`) and reservation TTL is 14 days by default (`RESERVATION_TTL_DAYS`).\n\nTo test in real time you'd either wait (impractical) or lower the TTL via env: stop the stack with `docker compose down`, edit `compose.yml`'s `RESERVATION_TTL_DAYS: 0` (or a small fractional day requires code change), and bring it back up.\n\nFor a meaningful demo, the **E15 test in `src/__tests__/cancel-and-reaper.spec.ts`** is the deterministic version — it injects a `FakeClock`, advances it 15 days, calls `reaper.sweep()` directly, and asserts the request → `EXPIRED` + reservation released + outbox FILE voided. See it in action via `npm run test`.\n\nThe Postman flow is mostly for awareness — the unit/integration test is the rigorous verification."
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {"key": "base_url", "value": "http://localhost:3000", "type": "string"},
+    {"key": "hcm_url", "value": "http://localhost:3101", "type": "string"},
+    {"key": "employee_id", "value": "emp1", "type": "string"},
+    {"key": "location_id", "value": "loc1", "type": "string"},
+    {"key": "manager_id", "value": "manager1", "type": "string"},
+    {"key": "request_id", "value": "", "type": "string", "description": "Auto-populated by the Submit request's test script."},
+    {"key": "idempotency_key", "value": "", "type": "string", "description": "Auto-generated per Submit by the pre-request script. Set `reuse_idempotency_key=true` to replay the same key."},
+    {"key": "reuse_idempotency_key", "value": "false", "type": "string", "description": "When true, Submit's pre-request script keeps the existing idempotency_key instead of minting a fresh one."}
+  ]
+}

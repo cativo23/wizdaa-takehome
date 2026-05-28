@@ -38,11 +38,21 @@ services:
     container_name: timeoff-mock-hcm
     command: ["node", "dist/mock-hcm/main.js"]
     ports:
-      - "3001:3001"
+      # Host 3101 → container 3001 (host 3001 commonly clashes with other dev services).
+      # The app reaches mock-hcm via the Docker network as `http://mock-hcm:3001` (unaffected).
+      - "3101:3001"
     environment:
       NODE_ENV: production
       PORT: 3001
       HCM_SCENARIO: correct             # correct | silent-insufficient | timeout | mutate-between-calls | divergent-batch
+    # Override the Dockerfile HEALTHCHECK: mock-hcm has no `/` route. /_control/batch
+    # returns the corpus JSON and is a reliable liveness probe.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/_control/batch"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     restart: unless-stopped
 
 volumes:
