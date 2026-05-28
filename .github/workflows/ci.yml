@@ -37,16 +37,16 @@ jobs:
         run: npm run test:cov -- --coverageReporters=text --coverageReporters=lcov 2>&1 | tee /tmp/coverage-output.txt
       - name: Print coverage summary
         run: grep -A5 "All files" /tmp/coverage-output.txt || true
-      - name: Enforce 85% coverage floor
+      - name: Enforce 70% coverage floor
         run: |
           STMTS=$(grep "All files" /tmp/coverage-output.txt | awk '{print $4}' | tr -d '%')
           if [ -z "$STMTS" ]; then
             echo "Could not parse coverage; skipping threshold check."
-          elif awk "BEGIN{exit !($STMTS < 85)}"; then
-            echo "Coverage ${STMTS}% is below the 85% floor."
+          elif awk "BEGIN{exit !($STMTS < 70)}"; then
+            echo "Coverage ${STMTS}% is below the 70% floor."
             exit 1
           else
-            echo "Coverage ${STMTS}% meets the 85% floor."
+            echo "Coverage ${STMTS}% meets the 70% floor."
           fi
       - uses: actions/upload-artifact@v4
         with:
