@@ -1,0 +1,78 @@
+# Demo deployment uses the mock HCM as the source-of-truth substitute.
+# In a real Wizdaa deployment, drop mock-hcm and set HCM_BASE_URL to the
+# production HCM endpoint.
+#
+# Usage on polaris2:
+#   docker compose -f compose.prod.yml pull
+#   docker compose -f compose.prod.yml up -d --remove-orphans
+
+services:
+  app:
+    image: ${DOCKERHUB_USERNAME:-cativo23}/wizdaa-takehome:latest
+    restart: unless-stopped
+    # No host port bindings — Traefik routes inbound traffic via space-server_web.
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_PATH: /app/data/timeoff.sqlite
+      HCM_BASE_URL: http://mock-hcm:3001   # points at the in-stack demo HCM
+      RESERVATION_TTL_DAYS: 14
+      HCM_RETRY_MAX_ATTEMPTS: 5
+      HCM_RETRY_BACKOFF_MS: 1000
+      BALANCE_LAZY_LOAD_ENABLED: "true"
+    volumes:
+      - timeoff-data:/app/data
+    depends_on:
+      mock-hcm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - space-server_web
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=space-server_web"
+      - "traefik.http.routers.wizdaa-takehome.rule=Host(`ooo.cativo.dev`)"
+      - "traefik.http.routers.wizdaa-takehome.entrypoints=websecure"
+      - "traefik.http.routers.wizdaa-takehome.tls.certresolver=letsencryptresolver"
+      - "traefik.http.services.wizdaa-takehome.loadbalancer.server.port=3000"
+      - "traefik.http.routers.wizdaa-takehome.middlewares=security-headers@file"
+
+  # Demo HCM substitute (ADR-007). Same image, mock-hcm entrypoint.
+  # Not exposed to Traefik; reachable only within this compose stack.
+  mock-hcm:
+    image: ${DOCKERHUB_USERNAME:-cativo23}/wizdaa-takehome:latest
+    command: ["node", "dist/mock-hcm/main.js"]
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      HCM_SCENARIO: correct
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/_control/batch"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - space-server_web
+
+networks:
+  space-server_web:
+    external: true
+
+volumes:
+  timeoff-data:
+    driver: local

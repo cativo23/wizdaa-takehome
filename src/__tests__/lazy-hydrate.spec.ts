@@ -14,13 +14,13 @@ import { TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
-import {
-  createTestModule,
-  withLockLatch,
-} from '../testing';
+import { createTestModule, withLockLatch } from '../testing';
 import { Balance } from '../entities/balance.entity';
 import { BalanceService } from '../balance/balance.service';
-import { BalanceLockService, balanceKey } from '../common/lock/balance-lock.service';
+import {
+  BalanceLockService,
+  balanceKey,
+} from '../common/lock/balance-lock.service';
 import { AppConfigService } from '../config/app-config.service';
 import { TimeOffRequestService } from '../time-off-request/time-off-request.service';
 import { RequestStatus } from '../entities/enums';

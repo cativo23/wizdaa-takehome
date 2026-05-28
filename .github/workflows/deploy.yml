@@ -1,0 +1,117 @@
+name: Deploy
+
+# Deploys on push to master (after CI passes) and on manual dispatch.
+# Skip by including [skip deploy] in the commit message.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    name: Build & Push Docker image
+    runs-on: ubuntu-latest
+    environment: prod
+    outputs:
+      short-sha: ${{ steps.sha.outputs.short }}
+      skip: ${{ steps.skip-check.outputs.skip }}
+
+    steps:
+      - name: Check for [skip deploy] in commit message
+        id: skip-check
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          if echo "$COMMIT_MSG" | grep -qF '[skip deploy]'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository
+        if: steps.skip-check.outputs.skip != 'true'
+        uses: actions/checkout@v4
+
+      - name: Compute short SHA
+        if: steps.skip-check.outputs.skip != 'true'
+        id: sha
+        run: echo "short=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        if: steps.skip-check.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: steps.skip-check.outputs.skip != 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        if: steps.skip-check.outputs.skip != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/wizdaa-takehome:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/wizdaa-takehome:${{ steps.sha.outputs.short }}
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/wizdaa-takehome:buildcache
+          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/wizdaa-takehome:buildcache,mode=max
+
+  deploy:
+    name: Deploy to polaris2
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: needs.build-and-push.outputs.skip != 'true'
+    environment: prod
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Copy compose.prod.yml to server
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ vars.POLARIS_HOST }}
+          username: ${{ secrets.POLARIS_USER }}
+          key: ${{ secrets.POLARIS_SSH_KEY }}
+          port: ${{ vars.POLARIS_PORT }}
+          source: "compose.prod.yml"
+          target: "/home/cativo23/deploy/wizdaa-takehome"
+          timeout: 10m
+          command_timeout: 10m
+
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ vars.POLARIS_HOST }}
+          username: ${{ secrets.POLARIS_USER }}
+          key: ${{ secrets.POLARIS_SSH_KEY }}
+          port: ${{ vars.POLARIS_PORT }}
+          script: |
+            cd /home/cativo23/deploy/wizdaa-takehome
+
+            # Refresh the image
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+            docker compose -f compose.prod.yml pull
+
+            # Restart (named volume survives)
+            docker compose -f compose.prod.yml up -d --remove-orphans
+
+            # Health gate
+            sleep 5
+            curl -sf https://ooo.cativo.dev/ || (echo "Health check failed after deploy"; exit 1)
+
+            # Prune dangling images
+            docker image prune -f
+
+            echo "=== Deploy complete — last 30 lines of app log ==="
+            docker compose -f compose.prod.yml logs app --tail=30

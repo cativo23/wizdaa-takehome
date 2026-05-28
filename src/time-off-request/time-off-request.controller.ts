@@ -55,7 +55,9 @@ export class TimeOffRequestController {
     // Idempotency-Key is required for submit (ADR-012). Any non-empty string is
     // accepted in v1; UUID-format enforcement can be added later.
     if (!idempotencyKey || idempotencyKey.length > 200) {
-      throw new BadRequestException('Idempotency-Key header is required and must be ≤ 200 chars.');
+      throw new BadRequestException(
+        'Idempotency-Key header is required and must be ≤ 200 chars.',
+      );
     }
     if (body.employeeId !== principalId) {
       throw new ForbiddenException(
@@ -146,7 +148,9 @@ export class TimeOffRequestController {
         throw new NotFoundException(`TimeOffRequest ${requestId} not found`);
       }
       if (existing.employeeId !== principalId) {
-        throw new ForbiddenException('Employees may only cancel their own requests.');
+        throw new ForbiddenException(
+          'Employees may only cancel their own requests.',
+        );
       }
     }
     return this.service.cancel(requestId, principalId);

@@ -1,8 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { AddressInfo } from 'net';
-import { bootstrapTestApp, TestAppHandles } from './e2e-helpers/bootstrap-test-app';
-import { bootstrapMockHcm, MockHcmHandles } from './e2e-helpers/bootstrap-mock-hcm';
+import {
+  bootstrapTestApp,
+  TestAppHandles,
+} from './e2e-helpers/bootstrap-test-app';
+import {
+  bootstrapMockHcm,
+  MockHcmHandles,
+} from './e2e-helpers/bootstrap-mock-hcm';
 import { withLatencyBudget } from './e2e-helpers/with-latency-budget';
 import { asEmployee, asManager } from './e2e-helpers/http-headers';
 import { OutboxDispatcherService } from '../src/hcm/outbox-dispatcher.service';
@@ -51,7 +57,12 @@ describe('hcm-network (real MockHcmModule + real HcmClientService)', () => {
       .post('/time-off-requests')
       .set(asEmployee(emp))
       .set('Idempotency-Key', idem)
-      .send({ employeeId: emp, locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' })
+      .send({
+        employeeId: emp,
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+      })
       .expect(201);
 
     const requestId: string = submitRes.body.id;
@@ -145,17 +156,25 @@ describe('hcm-network (real MockHcmModule + real HcmClientService)', () => {
       .post('/time-off-requests')
       .set(asEmployee(emp))
       .set('Idempotency-Key', idem)
-      .send({ employeeId: emp, locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' })
+      .send({
+        employeeId: emp,
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+      })
       .expect(201);
 
     await mockHcm.setScenario('timeout');
 
-    const approveRes = await withLatencyBudget('approve PENDING_SYNC with HCM=timeout', 2000, () =>
-      request(sut.app.getHttpServer())
-        .post(`/time-off-requests/${submitRes.body.id}/approve`)
-        .set(asManager())
-        .send({})
-        .expect(201),
+    const approveRes = await withLatencyBudget(
+      'approve PENDING_SYNC with HCM=timeout',
+      2000,
+      () =>
+        request(sut.app.getHttpServer())
+          .post(`/time-off-requests/${submitRes.body.id}/approve`)
+          .set(asManager())
+          .send({})
+          .expect(201),
     );
 
     expect(approveRes.body.status).toBe('PENDING_SYNC');
@@ -170,7 +189,12 @@ describe('hcm-network (real MockHcmModule + real HcmClientService)', () => {
       .post('/time-off-requests')
       .set(asEmployee(emp))
       .set('Idempotency-Key', idem)
-      .send({ employeeId: emp, locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' })
+      .send({
+        employeeId: emp,
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+      })
       .expect(201);
 
     await request(sut.app.getHttpServer())
@@ -207,7 +231,14 @@ describe('hcm-network (real MockHcmModule + real HcmClientService)', () => {
       .post('/_control/emit-batch')
       .send({
         targetUrl: `${sutUrl}/timeoff/hcm/batch`,
-        balances: [{ employeeId: emp, locationId: 'loc1', balance: 15, asOf: new Date().toISOString() }],
+        balances: [
+          {
+            employeeId: emp,
+            locationId: 'loc1',
+            balance: 15,
+            asOf: new Date().toISOString(),
+          },
+        ],
         asOf: new Date().toISOString(),
       })
       .expect(200);

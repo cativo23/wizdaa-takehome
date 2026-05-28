@@ -69,7 +69,10 @@ export async function seedBalance(
     // Default to a warm row so integration tests (which seed DB state and test
     // lifecycle, not cold-read hydration) hit the ADR-014 hot path and don't
     // accidentally trigger an HCM call. Pass null explicitly to test cold-read.
-    lastHcmAsOf: opts.lastHcmAsOf !== undefined ? opts.lastHcmAsOf : new Date('2026-05-27T00:00:00Z'),
+    lastHcmAsOf:
+      opts.lastHcmAsOf !== undefined
+        ? opts.lastHcmAsOf
+        : new Date('2026-05-27T00:00:00Z'),
   });
   return repo.save(entity);
 }

@@ -19,7 +19,9 @@ export class HcmUnavailableError extends Error {
   readonly operationId: string;
 
   constructor(operationId: string, cause?: unknown) {
-    super(`HCM unavailable after all retry attempts (operation=${operationId})`);
+    super(
+      `HCM unavailable after all retry attempts (operation=${operationId})`,
+    );
     this.name = 'HcmUnavailableError';
     this.operationId = operationId;
 

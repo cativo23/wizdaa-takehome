@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { bootstrapTestApp, TestAppHandles } from './e2e-helpers/bootstrap-test-app';
+import {
+  bootstrapTestApp,
+  TestAppHandles,
+} from './e2e-helpers/bootstrap-test-app';
 import { asEmployee, asManager } from './e2e-helpers/http-headers';
 import { Balance } from '../src/entities/balance.entity';
 import { OutboxDispatcherService } from '../src/hcm/outbox-dispatcher.service';
@@ -22,7 +25,10 @@ describe('lifecycle (FakeHcmClient)', () => {
   });
 
   it('GET / returns { status: "ok" }', async () => {
-    await request(handles.app.getHttpServer()).get('/').expect(200).expect({ status: 'ok' });
+    await request(handles.app.getHttpServer())
+      .get('/')
+      .expect(200)
+      .expect({ status: 'ok' });
   });
 
   it('submit returns 201 + PENDING + days computed server-side', async () => {
@@ -32,7 +38,12 @@ describe('lifecycle (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', idem)
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-06', endDate: '2026-07-07' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-06',
+        endDate: '2026-07-07',
+      })
       .expect(201);
 
     expect(res.body.status).toBe('PENDING');
@@ -51,7 +62,12 @@ describe('lifecycle (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', idem)
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+      })
       .expect(201);
 
     const requestId: string = submitRes.body.id;
@@ -85,7 +101,12 @@ describe('lifecycle (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', idem)
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+      })
       .expect(201);
     const requestId: string = submitRes.body.id;
 
@@ -125,7 +146,12 @@ describe('lifecycle (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', idem)
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+      })
       .expect(201);
     const requestId: string = submitRes.body.id;
 
@@ -147,9 +173,18 @@ describe('lifecycle (FakeHcmClient)', () => {
 
   it('submit insufficient balance → 409 + no reservation', async () => {
     const { app, moduleRef } = handles;
-    const balanceRepo: Repository<Balance> = (moduleRef as any).get(getRepositoryToken(Balance));
+    const balanceRepo: Repository<Balance> = (moduleRef as any).get(
+      getRepositoryToken(Balance),
+    );
     await balanceRepo.save(
-      balanceRepo.create({ employeeId: 'emp1', locationId: 'loc1', available: 0, reserved: 0, needsReview: false, lastHcmAsOf: new Date('2026-05-27T00:00:00Z') }),
+      balanceRepo.create({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        available: 0,
+        reserved: 0,
+        needsReview: false,
+        lastHcmAsOf: new Date('2026-05-27T00:00:00Z'),
+      }),
     );
 
     const idem = randomUUID();
@@ -157,7 +192,12 @@ describe('lifecycle (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', idem)
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-10' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-10',
+      })
       .expect(409);
 
     const balRes = await request(app.getHttpServer())
@@ -173,7 +213,12 @@ describe('lifecycle (FakeHcmClient)', () => {
   it('duplicate submit with same key + same body returns same id', async () => {
     const { app } = handles;
     const idem = randomUUID();
-    const body = { employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' };
+    const body = {
+      employeeId: 'emp1',
+      locationId: 'loc1',
+      startDate: '2026-07-07',
+      endDate: '2026-07-08',
+    };
 
     const first = await request(app.getHttpServer())
       .post('/time-off-requests')
@@ -208,14 +253,24 @@ describe('lifecycle (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', idem)
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+      })
       .expect(201);
 
     await request(app.getHttpServer())
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', idem)
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-14', endDate: '2026-07-16' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-14',
+        endDate: '2026-07-16',
+      })
       .expect(422);
 
     // First request is unchanged

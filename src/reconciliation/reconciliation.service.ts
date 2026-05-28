@@ -4,7 +4,10 @@ import { DataSource } from 'typeorm';
 import { BatchSyncLog } from '../entities/batch-sync-log.entity';
 import { ReconciliationEvent } from '../entities/reconciliation-event.entity';
 import { ReconResolution } from '../entities/enums';
-import { BalanceLockService, balanceKey } from '../common/lock/balance-lock.service';
+import {
+  BalanceLockService,
+  balanceKey,
+} from '../common/lock/balance-lock.service';
 import { BalanceService } from '../balance/balance.service';
 import { CLOCK } from '../common/clock/clock.tokens';
 import type { Clock } from '../common/clock/clock.interface';

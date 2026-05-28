@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
-import { bootstrapTestApp, TestAppHandles } from './e2e-helpers/bootstrap-test-app';
+import {
+  bootstrapTestApp,
+  TestAppHandles,
+} from './e2e-helpers/bootstrap-test-app';
 import { asEmployee, asManager } from './e2e-helpers/http-headers';
 import { OutboxDispatcherService } from '../src/hcm/outbox-dispatcher.service';
 import { runDispatcherOnce } from '../src/testing/concurrency-helpers';
@@ -70,7 +73,12 @@ describe('serialization (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', idem)
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+      })
       .expect(201);
 
     expect(res.body).toMatchObject({
@@ -96,7 +104,12 @@ describe('serialization (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', idem)
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+      })
       .expect(201);
 
     const approveRes = await request(app.getHttpServer())
@@ -126,7 +139,14 @@ describe('serialization (FakeHcmClient)', () => {
       .send({
         sequence: 1,
         asOf: '2026-05-27T12:00:00.000Z',
-        balances: [{ employeeId: 'emp1', locationId: 'loc1', balance: 11, asOf: '2026-05-27T12:00:00.000Z' }],
+        balances: [
+          {
+            employeeId: 'emp1',
+            locationId: 'loc1',
+            balance: 11,
+            asOf: '2026-05-27T12:00:00.000Z',
+          },
+        ],
       })
       .expect(202);
 

@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
-import { bootstrapTestApp, TestAppHandles } from './e2e-helpers/bootstrap-test-app';
+import {
+  bootstrapTestApp,
+  TestAppHandles,
+} from './e2e-helpers/bootstrap-test-app';
 import { asEmployee } from './e2e-helpers/http-headers';
 
 describe('validation-pipe (FakeHcmClient)', () => {
@@ -20,7 +23,12 @@ describe('validation-pipe (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', randomUUID())
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: 'not-a-date', endDate: '2026-07-08' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: 'not-a-date',
+        endDate: '2026-07-08',
+      })
       .expect(400);
   });
 
@@ -29,7 +37,12 @@ describe('validation-pipe (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', randomUUID())
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-10', endDate: '2026-07-07' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-10',
+        endDate: '2026-07-07',
+      })
       .expect(400);
   });
 
@@ -38,7 +51,11 @@ describe('validation-pipe (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', randomUUID())
-      .send({ locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' })
+      .send({
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+      })
       .expect(400);
   });
 
@@ -47,7 +64,13 @@ describe('validation-pipe (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', randomUUID())
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08', days: 999 })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+        days: 999,
+      })
       .expect(201);
 
     // days must be server-computed business day count, not the injected 999
@@ -61,7 +84,13 @@ describe('validation-pipe (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', headerKey)
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08', idempotencyKey: 'sneaky-value' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+        idempotencyKey: 'sneaky-value',
+      })
       .expect(201);
 
     // idempotencyKey in response should match header, not body field
@@ -82,7 +111,14 @@ describe('validation-pipe (FakeHcmClient)', () => {
       .send({
         sequence: 'not-a-number',
         asOf: '2026-05-27T12:00:00.000Z',
-        balances: [{ employeeId: 'emp1', locationId: 'loc1', balance: 10, asOf: '2026-05-27T12:00:00.000Z' }],
+        balances: [
+          {
+            employeeId: 'emp1',
+            locationId: 'loc1',
+            balance: 10,
+            asOf: '2026-05-27T12:00:00.000Z',
+          },
+        ],
       })
       .expect(400);
   });

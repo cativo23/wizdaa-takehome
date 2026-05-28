@@ -5,7 +5,10 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { TimeOffRequest } from '../entities/time-off-request.entity';
 import { Outbox } from '../entities/outbox.entity';
 import { RequestStatus } from '../entities/enums';
-import { BalanceLockService, balanceKey } from '../common/lock/balance-lock.service';
+import {
+  BalanceLockService,
+  balanceKey,
+} from '../common/lock/balance-lock.service';
 import { TimeOffRequestService } from '../time-off-request/time-off-request.service';
 import { CLOCK } from '../common/clock/clock.tokens';
 import type { Clock } from '../common/clock/clock.interface';

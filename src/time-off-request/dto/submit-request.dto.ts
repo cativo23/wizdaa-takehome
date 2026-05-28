@@ -1,12 +1,19 @@
-import { IsString, IsNotEmpty, IsDateString, MaxLength, Validate, ValidatorConstraint, ValidatorConstraintInterface, ValidationArguments } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsDateString,
+  MaxLength,
+  Validate,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+  ValidationArguments,
+} from 'class-validator';
 
 /**
  * Custom validator: endDate must be >= startDate.
  */
 @ValidatorConstraint({ name: 'endDateAfterStartDate', async: false })
-export class EndDateAfterStartDateConstraint
-  implements ValidatorConstraintInterface
-{
+export class EndDateAfterStartDateConstraint implements ValidatorConstraintInterface {
   validate(endDate: string, args: ValidationArguments): boolean {
     const obj = args.object as SubmitRequestDto;
     if (!obj.startDate || !endDate) return true; // let IsDateString handle nulls

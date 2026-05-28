@@ -2,7 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
-import { HcmClient, HcmGetBalanceOptions } from './contracts/hcm-client.interface.js';
+import {
+  HcmClient,
+  HcmGetBalanceOptions,
+} from './contracts/hcm-client.interface.js';
 import {
   HcmBalance,
   FileTimeOffCommand,
@@ -99,7 +102,11 @@ export class HcmClientService implements HcmClient {
     // Default path: full retry budget with exponential backoff.
     let lastError: unknown;
 
-    for (let attempt = 0; attempt < this.config.hcmRetryMaxAttempts; attempt++) {
+    for (
+      let attempt = 0;
+      attempt < this.config.hcmRetryMaxAttempts;
+      attempt++
+    ) {
       if (attempt > 0) {
         await this.backoffDelay(attempt);
       }
@@ -148,7 +155,12 @@ export class HcmClientService implements HcmClient {
   async fileTimeOff(cmd: FileTimeOffCommand): Promise<FileTimeOffResult> {
     const url = `${this.config.hcmBaseUrl}/hcm/timeoff`;
 
-    return this.postWithRetry<FileTimeOffResult>(url, cmd, cmd.idempotencyKey, 'fileTimeOff');
+    return this.postWithRetry<FileTimeOffResult>(
+      url,
+      cmd,
+      cmd.idempotencyKey,
+      'fileTimeOff',
+    );
   }
 
   /**
@@ -159,10 +171,17 @@ export class HcmClientService implements HcmClient {
    *
    * RETURNS { ok: false, errorHint } on any error — never throws.
    */
-  async reverseTimeOff(cmd: ReverseTimeOffCommand): Promise<ReverseTimeOffResult> {
+  async reverseTimeOff(
+    cmd: ReverseTimeOffCommand,
+  ): Promise<ReverseTimeOffResult> {
     const url = `${this.config.hcmBaseUrl}/hcm/timeoff/reverse`;
 
-    return this.postWithRetry<ReverseTimeOffResult>(url, cmd, cmd.idempotencyKey, 'reverseTimeOff');
+    return this.postWithRetry<ReverseTimeOffResult>(
+      url,
+      cmd,
+      cmd.idempotencyKey,
+      'reverseTimeOff',
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -176,7 +195,9 @@ export class HcmClientService implements HcmClient {
    * On network/5xx after all attempts: return { ok: false, errorHint: 'unreachable' }.
    * On success: return { ok: true, ackedAt }.
    */
-  private async postWithRetry<T extends { ok: boolean; ackedAt?: string; errorHint?: string }>(
+  private async postWithRetry<
+    T extends { ok: boolean; ackedAt?: string; errorHint?: string },
+  >(
     url: string,
     body: unknown,
     idempotencyKey: string,
@@ -184,7 +205,11 @@ export class HcmClientService implements HcmClient {
   ): Promise<T> {
     let lastHint = 'unreachable';
 
-    for (let attempt = 0; attempt < this.config.hcmRetryMaxAttempts; attempt++) {
+    for (
+      let attempt = 0;
+      attempt < this.config.hcmRetryMaxAttempts;
+      attempt++
+    ) {
       if (attempt > 0) {
         await this.backoffDelay(attempt);
       }
@@ -213,7 +238,10 @@ export class HcmClientService implements HcmClient {
           this.logger.debug(
             `[HCM] ${operation} business-rejected (2xx ok=false) idempotencyKey=${idempotencyKey} hint=${data.errorHint ?? 'hcm-rejected'}`,
           );
-          return { ok: false, errorHint: data.errorHint ?? 'hcm-rejected' } as T;
+          return {
+            ok: false,
+            errorHint: data.errorHint ?? 'hcm-rejected',
+          } as T;
         }
 
         if (data.ok === undefined) {

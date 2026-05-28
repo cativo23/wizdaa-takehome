@@ -67,7 +67,9 @@ const DEFAULT_CLOCK_DATE = new Date('2026-05-27T00:00:00Z');
  * @param overrides  Optional additional provider overrides applied on top of
  *                   the default CLOCK + HCM_CLIENT replacements.
  */
-export function createTestModule(overrides: ProviderOverride[] = []): TestModuleHandles {
+export function createTestModule(
+  overrides: ProviderOverride[] = [],
+): TestModuleHandles {
   const clock = new FakeClock(DEFAULT_CLOCK_DATE);
   const hcm = new FakeHcmClient();
 
@@ -118,7 +120,9 @@ export function createTestModule(overrides: ProviderOverride[] = []): TestModule
 
   // Apply caller-supplied overrides
   for (const override of overrides) {
-    builder = builder.overrideProvider(override.token).useValue(override.useValue);
+    builder = builder
+      .overrideProvider(override.token)
+      .useValue(override.useValue);
   }
 
   return { builder, clock, hcm };

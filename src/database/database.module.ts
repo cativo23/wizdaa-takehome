@@ -51,7 +51,10 @@ export function buildDataSourceOptions(
         // writer, SQLite). It auto-creates the schema on boot so the service
         // starts clean without migration files. The production-hardening path
         // is to remove this flag and ship TypeORM migrations instead (§11 fork).
-        buildDataSourceOptions({ database: cfg.databasePath, synchronize: true }),
+        buildDataSourceOptions({
+          database: cfg.databasePath,
+          synchronize: true,
+        }),
     }),
   ],
   exports: [TypeOrmModule],

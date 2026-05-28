@@ -3,7 +3,13 @@
  * Using classes (not interfaces) so emitDecoratorMetadata works with @Body().
  */
 
-import { IsString, IsNotEmpty, IsInt, IsDateString, Min } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsInt,
+  IsDateString,
+  Min,
+} from 'class-validator';
 
 export class FileTimeOffDto {
   @IsString()

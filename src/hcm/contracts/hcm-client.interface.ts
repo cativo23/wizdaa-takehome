@@ -45,7 +45,11 @@ export interface HcmClient {
    * so that HCM downtime causes a fast-fail (single attempt, 2500 ms timeout)
    * rather than exhausting the full 31-second retry budget.
    */
-  getBalance(employeeId: string, locationId: string, opts?: HcmGetBalanceOptions): Promise<HcmBalance>;
+  getBalance(
+    employeeId: string,
+    locationId: string,
+    opts?: HcmGetBalanceOptions,
+  ): Promise<HcmBalance>;
 
   /**
    * POST /hcm/timeoff — file a time-off deduction against HCM.

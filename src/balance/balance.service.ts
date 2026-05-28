@@ -1,6 +1,10 @@
 import { Injectable, Inject, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, OptimisticLockVersionMismatchError, EntityManager } from 'typeorm';
+import {
+  Repository,
+  OptimisticLockVersionMismatchError,
+  EntityManager,
+} from 'typeorm';
 import { Balance } from '../entities/balance.entity';
 import { TimeOffRequest } from '../entities/time-off-request.entity';
 import { Outbox } from '../entities/outbox.entity';
@@ -9,7 +13,10 @@ import { HcmBalance } from '../hcm/contracts/hcm.types';
 import type { HcmClient } from '../hcm/contracts/hcm-client.interface';
 import { HCM_CLIENT } from '../hcm/hcm.tokens';
 import { HcmUnavailableError } from '../hcm/hcm.errors';
-import { BalanceLockService, balanceKey } from '../common/lock/balance-lock.service';
+import {
+  BalanceLockService,
+  balanceKey,
+} from '../common/lock/balance-lock.service';
 import { CLOCK } from '../common/clock/clock.tokens';
 import type { Clock } from '../common/clock/clock.interface';
 import { AppConfigService } from '../config/app-config.service';
@@ -124,7 +131,9 @@ export class BalanceService {
             throw err; // Exhaust retries — propagate
           }
           // Reload and re-apply mutation
-          const repo = manager ? manager.getRepository(Balance) : this.balanceRepo;
+          const repo = manager
+            ? manager.getRepository(Balance)
+            : this.balanceRepo;
           const reloaded = await repo.findOne({
             where: {
               employeeId: balance.employeeId,
@@ -163,7 +172,10 @@ export class BalanceService {
    *
    * FR-1.
    */
-  async getBalance(employeeId: string, locationId: string): Promise<BalanceWithDegraded> {
+  async getBalance(
+    employeeId: string,
+    locationId: string,
+  ): Promise<BalanceWithDegraded> {
     const row = await this.balanceRepo.findOne({
       where: { employeeId, locationId },
     });
@@ -190,52 +202,57 @@ export class BalanceService {
 
     // Cold path: row is absent or lastHcmAsOf is null.
     // Acquire the balance-key lock to prevent stampede (ADR-010).
-    return this.lockService.runExclusive(balanceKey(employeeId, locationId), async () => {
-      // Double-checked locking: re-read inside the lock in case another caller
-      // already hydrated the row while we were waiting to acquire the lock.
-      const fresh = await this.balanceRepo.findOne({
-        where: { employeeId, locationId },
-      });
-      if (fresh !== null && fresh.lastHcmAsOf !== null) {
-        return fresh; // Another caller already hydrated. Cache warm now.
-      }
-
-      // Still cold — perform a single HCM read.
-      // Pass retry:false so a down HCM degrades fast (≤2.5 s) instead of
-      // burning the full 31-second retry budget. The caller has a graceful
-      // local fallback (ephemeral degraded DTO — ADR-014).
-      let snapshot;
-      try {
-        snapshot = await this.hcmClient.getBalance(employeeId, locationId, { retry: false });
-      } catch (err) {
-        if (err instanceof HcmUnavailableError) {
-          // CRITICAL: do NOT persist anything. Return an ephemeral DTO so the
-          // next request retries the cold-load (no cached wrong answer — ADR-014).
-          const now = this.clock.now();
-          const ephemeral = Object.assign(new Balance(), {
-            employeeId,
-            locationId,
-            available: 0,
-            reserved: 0,
-            needsReview: false,
-            version: 0,
-            lastHcmAsOf: null,
-            createdAt: now,
-            updatedAt: now,
-            degraded: true,
-          }) as BalanceWithDegraded;
-          return ephemeral;
+    return this.lockService.runExclusive(
+      balanceKey(employeeId, locationId),
+      async () => {
+        // Double-checked locking: re-read inside the lock in case another caller
+        // already hydrated the row while we were waiting to acquire the lock.
+        const fresh = await this.balanceRepo.findOne({
+          where: { employeeId, locationId },
+        });
+        if (fresh !== null && fresh.lastHcmAsOf !== null) {
+          return fresh; // Another caller already hydrated. Cache warm now.
         }
-        throw err;
-      }
 
-      // Success — persist the snapshot via the existing applyHcmSnapshot path.
-      // Caller already holds the lock so this is safe (no re-entrancy issue).
-      await this.applyHcmSnapshot(snapshot);
-      return (await this.balanceRepo.findOne({
-        where: { employeeId, locationId },
-      })) as Balance;
-    });
+        // Still cold — perform a single HCM read.
+        // Pass retry:false so a down HCM degrades fast (≤2.5 s) instead of
+        // burning the full 31-second retry budget. The caller has a graceful
+        // local fallback (ephemeral degraded DTO — ADR-014).
+        let snapshot;
+        try {
+          snapshot = await this.hcmClient.getBalance(employeeId, locationId, {
+            retry: false,
+          });
+        } catch (err) {
+          if (err instanceof HcmUnavailableError) {
+            // CRITICAL: do NOT persist anything. Return an ephemeral DTO so the
+            // next request retries the cold-load (no cached wrong answer — ADR-014).
+            const now = this.clock.now();
+            const ephemeral = Object.assign(new Balance(), {
+              employeeId,
+              locationId,
+              available: 0,
+              reserved: 0,
+              needsReview: false,
+              version: 0,
+              lastHcmAsOf: null,
+              createdAt: now,
+              updatedAt: now,
+              degraded: true,
+            }) as BalanceWithDegraded;
+            return ephemeral;
+          }
+          throw err;
+        }
+
+        // Success — persist the snapshot via the existing applyHcmSnapshot path.
+        // Caller already holds the lock so this is safe (no re-entrancy issue).
+        await this.applyHcmSnapshot(snapshot);
+        return (await this.balanceRepo.findOne({
+          where: { employeeId, locationId },
+        })) as Balance;
+      },
+    );
   }
 
   /**
@@ -285,9 +302,13 @@ export class BalanceService {
 
     // A1/A2 fix: reserve only increments reserved; available is NOT decremented here.
     // available is only reduced at commit time (approve path).
-    await this.saveWithRetry(balance, (b) => {
-      b.reserved += days;
-    }, manager);
+    await this.saveWithRetry(
+      balance,
+      (b) => {
+        b.reserved += days;
+      },
+      manager,
+    );
   }
 
   /**
@@ -304,9 +325,13 @@ export class BalanceService {
   ): Promise<void> {
     const balance = await this.findOrCreate(employeeId, locationId, manager);
 
-    await this.saveWithRetry(balance, (b) => {
-      b.reserved = Math.max(0, b.reserved - days);
-    }, manager);
+    await this.saveWithRetry(
+      balance,
+      (b) => {
+        b.reserved = Math.max(0, b.reserved - days);
+      },
+      manager,
+    );
   }
 
   /**
@@ -321,10 +346,14 @@ export class BalanceService {
   ): Promise<void> {
     const balance = await this.findOrCreate(employeeId, locationId, manager);
 
-    await this.saveWithRetry(balance, (b) => {
-      b.available -= days;
-      b.reserved = Math.max(0, b.reserved - days);
-    }, manager);
+    await this.saveWithRetry(
+      balance,
+      (b) => {
+        b.available -= days;
+        b.reserved = Math.max(0, b.reserved - days);
+      },
+      manager,
+    );
   }
 
   /**
@@ -339,9 +368,13 @@ export class BalanceService {
   ): Promise<void> {
     const balance = await this.findOrCreate(employeeId, locationId, manager);
 
-    await this.saveWithRetry(balance, (b) => {
-      b.available += days;
-    }, manager);
+    await this.saveWithRetry(
+      balance,
+      (b) => {
+        b.available += days;
+      },
+      manager,
+    );
   }
 
   /**
@@ -350,17 +383,24 @@ export class BalanceService {
    * Called inside the balance-key lock during the approve sequence.
    * Does NOT touch `reserved`.
    */
-  async applyHcmSnapshot(snapshot: HcmBalance, manager?: EntityManager): Promise<void> {
+  async applyHcmSnapshot(
+    snapshot: HcmBalance,
+    manager?: EntityManager,
+  ): Promise<void> {
     const balance = await this.findOrCreate(
       snapshot.employeeId,
       snapshot.locationId,
       manager,
     );
 
-    await this.saveWithRetry(balance, (b) => {
-      b.available = snapshot.balance;
-      b.lastHcmAsOf = new Date(snapshot.asOf);
-    }, manager);
+    await this.saveWithRetry(
+      balance,
+      (b) => {
+        b.available = snapshot.balance;
+        b.lastHcmAsOf = new Date(snapshot.asOf);
+      },
+      manager,
+    );
   }
 
   /**
@@ -385,14 +425,28 @@ export class BalanceService {
    *
    * Called inside the balance-key lock by ReconciliationService.
    */
-  async reconcileBalance(hcmEntry: HcmBalance, asOf: Date, manager?: EntityManager): Promise<void> {
+  async reconcileBalance(
+    hcmEntry: HcmBalance,
+    asOf: Date,
+    manager?: EntityManager,
+  ): Promise<void> {
     const { employeeId, locationId, balance: hcmValue } = hcmEntry;
 
-    const requestRepo = manager ? manager.getRepository(TimeOffRequest) : this.requestRepo;
-    const outboxRepo = manager ? manager.getRepository(Outbox) : this.outboxRepo;
-    const reconEventRepo = manager ? manager.getRepository(ReconciliationEvent) : this.reconEventRepo;
+    const requestRepo = manager
+      ? manager.getRepository(TimeOffRequest)
+      : this.requestRepo;
+    const outboxRepo = manager
+      ? manager.getRepository(Outbox)
+      : this.outboxRepo;
+    const reconEventRepo = manager
+      ? manager.getRepository(ReconciliationEvent)
+      : this.reconEventRepo;
 
-    const currentBalance = await this.findOrCreate(employeeId, locationId, manager);
+    const currentBalance = await this.findOrCreate(
+      employeeId,
+      locationId,
+      manager,
+    );
     const localValueBefore = currentBalance.available;
 
     // Step 2 — Requests whose deductions are NOT yet reflected in the HCM snapshot.
@@ -446,9 +500,7 @@ export class BalanceService {
         reqStatus: RequestStatus.CANCELLED,
       })
       .select(['o.aggregateId', 'r.days'])
-      .getRawMany<{ r_days: number }>()
-      ;
-
+      .getRawMany<{ r_days: number }>();
     const pendingReverseDays = pendingReverseOutboxRows.reduce(
       (sum, row) => sum + (row.r_days ?? 0),
       0,
@@ -490,14 +542,18 @@ export class BalanceService {
     const isNegative = newAvailable < 0;
 
     // Apply to the balance entity with optimistic-lock retry
-    await this.saveWithRetry(currentBalance, (b) => {
-      b.available = newAvailable;
-      b.reserved = freshReserved;
-      b.lastHcmAsOf = asOf;
-      if (isNegative) {
-        b.needsReview = true;
-      }
-    }, manager);
+    await this.saveWithRetry(
+      currentBalance,
+      (b) => {
+        b.available = newAvailable;
+        b.reserved = freshReserved;
+        b.lastHcmAsOf = asOf;
+        if (isNegative) {
+          b.needsReview = true;
+        }
+      },
+      manager,
+    );
 
     // Step 6 — Emit ReconciliationEvent (append-only)
     const resolution: ReconResolution = isNegative

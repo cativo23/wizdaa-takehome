@@ -16,7 +16,10 @@ export interface BalanceEntry {
 export const balanceStore = new Map<string, BalanceEntry>();
 
 /** Idempotency-key → stored result (for FILE and REVERSE operations). */
-export const idempotencyStore = new Map<string, { ok: boolean; ackedAt: string }>();
+export const idempotencyStore = new Map<
+  string,
+  { ok: boolean; ackedAt: string }
+>();
 
 /** Monotonic sequence counter for batch emission. */
 let currentSequence = 0;
@@ -43,7 +46,8 @@ export type HcmScenario =
   | 'duplicate-delivery'
   | 'ignore-idempotency-key';
 
-let activeScenario: HcmScenario = (process.env['HCM_SCENARIO'] as HcmScenario) ?? 'correct';
+let activeScenario: HcmScenario =
+  (process.env['HCM_SCENARIO'] as HcmScenario) ?? 'correct';
 
 export function getScenario(): HcmScenario {
   return activeScenario;
@@ -56,11 +60,36 @@ export function setScenario(scenario: HcmScenario): void {
 /** Seed initial balances so the main service has data to read on startup. */
 function seedBalances(): void {
   const seed: BalanceEntry[] = [
-    { employeeId: 'emp1', locationId: 'loc1', balance: 10, asOf: new Date().toISOString() },
-    { employeeId: 'emp1', locationId: 'loc2', balance: 5, asOf: new Date().toISOString() },
-    { employeeId: 'emp2', locationId: 'loc1', balance: 8, asOf: new Date().toISOString() },
-    { employeeId: 'emp3', locationId: 'loc1', balance: 15, asOf: new Date().toISOString() },
-    { employeeId: 'emp3', locationId: 'loc2', balance: 3, asOf: new Date().toISOString() },
+    {
+      employeeId: 'emp1',
+      locationId: 'loc1',
+      balance: 10,
+      asOf: new Date().toISOString(),
+    },
+    {
+      employeeId: 'emp1',
+      locationId: 'loc2',
+      balance: 5,
+      asOf: new Date().toISOString(),
+    },
+    {
+      employeeId: 'emp2',
+      locationId: 'loc1',
+      balance: 8,
+      asOf: new Date().toISOString(),
+    },
+    {
+      employeeId: 'emp3',
+      locationId: 'loc1',
+      balance: 15,
+      asOf: new Date().toISOString(),
+    },
+    {
+      employeeId: 'emp3',
+      locationId: 'loc2',
+      balance: 3,
+      asOf: new Date().toISOString(),
+    },
   ];
   for (const entry of seed) {
     balanceStore.set(storeKey(entry.employeeId, entry.locationId), entry);

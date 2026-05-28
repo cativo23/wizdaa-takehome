@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { bootstrapTestApp, TestAppHandles } from './e2e-helpers/bootstrap-test-app';
+import {
+  bootstrapTestApp,
+  TestAppHandles,
+} from './e2e-helpers/bootstrap-test-app';
 import { asEmployee, asManager } from './e2e-helpers/http-headers';
 import { Balance } from '../src/entities/balance.entity';
 import { TimeOffRequest } from '../src/entities/time-off-request.entity';
@@ -30,7 +33,14 @@ describe('batch-ingest (FakeHcmClient)', () => {
       .send({
         sequence: 10,
         asOf: '2026-05-27T12:00:00.000Z',
-        balances: [{ employeeId: 'emp1', locationId: 'loc1', balance: 20, asOf: '2026-05-27T12:00:00.000Z' }],
+        balances: [
+          {
+            employeeId: 'emp1',
+            locationId: 'loc1',
+            balance: 20,
+            asOf: '2026-05-27T12:00:00.000Z',
+          },
+        ],
       })
       .expect(202);
 
@@ -52,7 +62,14 @@ describe('batch-ingest (FakeHcmClient)', () => {
       .send({
         sequence: 10,
         asOf: '2026-05-27T12:00:00.000Z',
-        balances: [{ employeeId: 'emp1', locationId: 'loc1', balance: 20, asOf: '2026-05-27T12:00:00.000Z' }],
+        balances: [
+          {
+            employeeId: 'emp1',
+            locationId: 'loc1',
+            balance: 20,
+            asOf: '2026-05-27T12:00:00.000Z',
+          },
+        ],
       })
       .expect(202);
 
@@ -62,7 +79,14 @@ describe('batch-ingest (FakeHcmClient)', () => {
       .send({
         sequence: 5,
         asOf: '2026-05-25T12:00:00.000Z',
-        balances: [{ employeeId: 'emp1', locationId: 'loc1', balance: 30, asOf: '2026-05-25T12:00:00.000Z' }],
+        balances: [
+          {
+            employeeId: 'emp1',
+            locationId: 'loc1',
+            balance: 30,
+            asOf: '2026-05-25T12:00:00.000Z',
+          },
+        ],
       })
       .expect(202);
 
@@ -84,7 +108,14 @@ describe('batch-ingest (FakeHcmClient)', () => {
       .send({
         sequence: 10,
         asOf: '2026-05-27T10:00:00.000Z',
-        balances: [{ employeeId: 'emp1', locationId: 'loc1', balance: 20, asOf: '2026-05-27T10:00:00.000Z' }],
+        balances: [
+          {
+            employeeId: 'emp1',
+            locationId: 'loc1',
+            balance: 20,
+            asOf: '2026-05-27T10:00:00.000Z',
+          },
+        ],
       })
       .expect(202);
 
@@ -93,7 +124,14 @@ describe('batch-ingest (FakeHcmClient)', () => {
       .send({
         sequence: 15,
         asOf: '2026-05-27T15:00:00.000Z',
-        balances: [{ employeeId: 'emp1', locationId: 'loc1', balance: 25, asOf: '2026-05-27T15:00:00.000Z' }],
+        balances: [
+          {
+            employeeId: 'emp1',
+            locationId: 'loc1',
+            balance: 25,
+            asOf: '2026-05-27T15:00:00.000Z',
+          },
+        ],
       })
       .expect(202);
 
@@ -110,7 +148,14 @@ describe('batch-ingest (FakeHcmClient)', () => {
       .send({
         sequence: 12,
         asOf: '2026-05-27T12:00:00.000Z',
-        balances: [{ employeeId: 'emp1', locationId: 'loc1', balance: 99, asOf: '2026-05-27T12:00:00.000Z' }],
+        balances: [
+          {
+            employeeId: 'emp1',
+            locationId: 'loc1',
+            balance: 99,
+            asOf: '2026-05-27T12:00:00.000Z',
+          },
+        ],
       })
       .expect(202);
 
@@ -134,7 +179,12 @@ describe('batch-ingest (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee(emp))
       .set('Idempotency-Key', idem)
-      .send({ employeeId: emp, locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-11' })
+      .send({
+        employeeId: emp,
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-11',
+      })
       .expect(201);
 
     const days: number = submitRes.body.days;
@@ -156,14 +206,25 @@ describe('batch-ingest (FakeHcmClient)', () => {
       .send({
         sequence: 100,
         asOf: new Date().toISOString(),
-        balances: [{ employeeId: emp, locationId: 'loc1', balance: 1, asOf: new Date().toISOString() }],
+        balances: [
+          {
+            employeeId: emp,
+            locationId: 'loc1',
+            balance: 1,
+            asOf: new Date().toISOString(),
+          },
+        ],
       })
       .expect(202);
 
     // Seed a balance row with needsReview manually using repo to guarantee the condition,
     // since reconciliation logic may vary based on ack state
-    const balanceRepo: Repository<Balance> = (moduleRef as any).get(getRepositoryToken(Balance));
-    const existing = await balanceRepo.findOne({ where: { employeeId: emp, locationId: 'loc1' } });
+    const balanceRepo: Repository<Balance> = (moduleRef as any).get(
+      getRepositoryToken(Balance),
+    );
+    const existing = await balanceRepo.findOne({
+      where: { employeeId: emp, locationId: 'loc1' },
+    });
     if (existing && !existing.needsReview) {
       // Force the flag since reconciliation arithmetic depends on hcmAckAt timing
       await balanceRepo.save({ ...existing, needsReview: true, available: -1 });

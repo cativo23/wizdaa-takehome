@@ -65,7 +65,12 @@ export class HcmController {
 
     if (!entry) {
       // Auto-provision a zero-balance entry so the service never gets a hard 404.
-      entry = { employeeId, locationId, balance: 0, asOf: new Date().toISOString() };
+      entry = {
+        employeeId,
+        locationId,
+        balance: 0,
+        asOf: new Date().toISOString(),
+      };
       balanceStore.set(key, entry);
     }
 

@@ -5,6 +5,9 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // Suppress the Express `X-Powered-By` info-disclosure header (TRD §12).
+  // The underlying adapter is typed as `any` because Nest abstracts over Express/Fastify.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
   app.getHttpAdapter().getInstance().disable('x-powered-by');
 
   // Global validation: strip unknown properties, auto-transform types.

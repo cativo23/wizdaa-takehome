@@ -25,7 +25,9 @@ export class BatchController {
    */
   @Post('batch')
   @HttpCode(HttpStatus.ACCEPTED)
-  async ingestBatch(@Body() body: BatchCorpusDto): Promise<{ accepted: boolean }> {
+  async ingestBatch(
+    @Body() body: BatchCorpusDto,
+  ): Promise<{ accepted: boolean }> {
     await this.reconciliationService.ingestBatch({
       sequence: body.sequence,
       asOf: body.asOf,

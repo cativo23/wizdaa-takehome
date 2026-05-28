@@ -12,7 +12,10 @@
 
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
+import {
+  ConflictException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 
 import {
   createTestModule,
@@ -29,14 +32,19 @@ import { RequestStatus, OutboxStatus } from '../entities/enums';
 import { TimeOffRequestService } from '../time-off-request/time-off-request.service';
 import { OutboxDispatcherService } from '../hcm/outbox-dispatcher.service';
 import { ReservationReaperService } from '../reservation-reaper/reservation-reaper.service';
-import { BalanceLockService, balanceKey } from '../common/lock/balance-lock.service';
+import {
+  BalanceLockService,
+  balanceKey,
+} from '../common/lock/balance-lock.service';
 
 // ---------------------------------------------------------------------------
 // E1 — Submit exceeding available
 // ---------------------------------------------------------------------------
 
 describe('E1 — Submit exceeding available', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
   let requestRepo: Repository<TimeOffRequest>;
@@ -88,7 +96,9 @@ describe('E1 — Submit exceeding available', () => {
 // ---------------------------------------------------------------------------
 
 describe('E2 — Two concurrent submits, only one fits', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
   let requestRepo: Repository<TimeOffRequest>;
@@ -114,7 +124,13 @@ describe('E2 — Two concurrent submits, only one fits', () => {
 
     // Start A — will enter the lock and pause at the latch
     // Jun 1-3 (Mon-Wed) = 3 business days (disjoint from B's Jun 8-10)
-    const promiseA = svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-03', 'key-e2-a');
+    const promiseA = svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-03',
+      'key-e2-a',
+    );
 
     // Wait until A is inside the critical section
     await latch.reached;
@@ -124,8 +140,14 @@ describe('E2 — Two concurrent submits, only one fits', () => {
     let bSettled = false;
     const promiseB = svc
       .submit('emp1', 'loc1', '2026-06-08', '2026-06-10', 'key-e2-b')
-      .then((r) => { bSettled = true; return r; })
-      .catch((e) => { bSettled = true; throw e; });
+      .then((r) => {
+        bSettled = true;
+        return r;
+      })
+      .catch((e) => {
+        bSettled = true;
+        throw e;
+      });
 
     // B has not yet started — it is queued behind A's lock
     expect(bSettled).toBe(false);
@@ -169,7 +191,9 @@ describe('E2 — Two concurrent submits, only one fits', () => {
 // ---------------------------------------------------------------------------
 
 describe('E8 — Duplicate submit (same idempotency key)', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
   let requestRepo: Repository<TimeOffRequest>;
@@ -189,8 +213,20 @@ describe('E8 — Duplicate submit (same idempotency key)', () => {
   it('returns the same request on duplicate submit without double-reserving', async () => {
     const IDEM_KEY = 'key-e8-dup';
 
-    const first = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', IDEM_KEY);
-    const second = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', IDEM_KEY);
+    const first = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-02',
+      IDEM_KEY,
+    );
+    const second = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-02',
+      IDEM_KEY,
+    );
 
     // Must return the same request id
     expect(second.id).toBe(first.id);
@@ -226,7 +262,9 @@ describe('E8 — Duplicate submit (same idempotency key)', () => {
 // ---------------------------------------------------------------------------
 
 describe('E19 — Two submits, same dates, different keys', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
 
@@ -242,7 +280,13 @@ describe('E19 — Two submits, same dates, different keys', () => {
   afterEach(() => moduleRef.close());
 
   it('allows the first submit and rejects the second with same dates but different idempotency keys', async () => {
-    const first = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-03', 'key-e19-a');
+    const first = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-03',
+      'key-e19-a',
+    );
     expect(first.status).toBe(RequestStatus.PENDING);
 
     await expect(
@@ -256,7 +300,9 @@ describe('E19 — Two submits, same dates, different keys', () => {
 // ---------------------------------------------------------------------------
 
 describe('E20 — Boundary touch: shared day causes overlap rejection', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
 
@@ -275,7 +321,13 @@ describe('E20 — Boundary touch: shared day causes overlap rejection', () => {
     // Jan 5 2026 = Monday, Jan 6 = Tuesday, Jan 7 = Wednesday
     // Range 1: Jan 5-6 = 2 business days
     // Range 2: Jan 6-7 = 2 business days; shares Jan 6 with range 1
-    const first = await svc.submit('emp1', 'loc1', '2026-01-05', '2026-01-06', 'key-e20-a');
+    const first = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-01-05',
+      '2026-01-06',
+      'key-e20-a',
+    );
     expect(first.status).toBe(RequestStatus.PENDING);
 
     await expect(
@@ -289,7 +341,9 @@ describe('E20 — Boundary touch: shared day causes overlap rejection', () => {
 // ---------------------------------------------------------------------------
 
 describe('E21 — Concurrent disjoint dates, balance fits both', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
   let requestRepo: Repository<TimeOffRequest>;
@@ -334,7 +388,9 @@ describe('E21 — Concurrent disjoint dates, balance fits both', () => {
 // ---------------------------------------------------------------------------
 
 describe('E22 — Concurrent disjoint dates, balance fits only one', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
   let requestRepo: Repository<TimeOffRequest>;
@@ -359,14 +415,22 @@ describe('E22 — Concurrent disjoint dates, balance fits only one', () => {
     const latch = withLockLatch(lockService, 'emp1', 'loc1');
 
     // Jun 1-3 (3 days) and Jun 8-10 (3 days) — disjoint
-    const promiseA = svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-03', 'key-e22-a');
+    const promiseA = svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-03',
+      'key-e22-a',
+    );
     await latch.reached;
 
     // B queued behind A
     let bError: unknown = null;
     const promiseB = svc
       .submit('emp1', 'loc1', '2026-06-08', '2026-06-10', 'key-e22-b')
-      .catch((e) => { bError = e; });
+      .catch((e) => {
+        bError = e;
+      });
 
     latch.release();
     const resultA = await promiseA;
@@ -392,7 +456,9 @@ describe('E22 — Concurrent disjoint dates, balance fits only one', () => {
 // ---------------------------------------------------------------------------
 
 describe('E23 — Same key, different body (client bug)', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
   let requestRepo: Repository<TimeOffRequest>;
@@ -440,7 +506,9 @@ describe('E23 — Same key, different body (client bug)', () => {
 // ---------------------------------------------------------------------------
 
 describe('E28 — Resubmit after EXPIRE with same form key', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
   let requestRepo: Repository<TimeOffRequest>;
@@ -474,7 +542,13 @@ describe('E28 — Resubmit after EXPIRE with same form key', () => {
     const IDEM_KEY = 'key-e28-resubmit';
 
     // 1. Submit first request (PENDING)
-    const original = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', IDEM_KEY);
+    const original = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-02',
+      IDEM_KEY,
+    );
     expect(original.status).toBe(RequestStatus.PENDING);
 
     // 2. Advance clock past the 14-day TTL (use 15 days)
@@ -484,13 +558,21 @@ describe('E28 — Resubmit after EXPIRE with same form key', () => {
     await runReaperOnce(reaper);
 
     // Verify the original request is now EXPIRED
-    const expired = await requestRepo.findOneOrFail({ where: { id: original.id } });
+    const expired = await requestRepo.findOneOrFail({
+      where: { id: original.id },
+    });
     expect(expired.status).toBe(RequestStatus.EXPIRED);
 
     // 4. Resubmit with the same idempotency key but a new date range (original expired, so new submit allowed)
     // Use a future date well after TTL expiry — clock is now 2026-06-11 (2026-05-27 + 15 days)
     // Jun 15-16 (Mon-Tue) = 2 business days, won't overlap with the expired Jun 1-2 range
-    const newRequest = await svc.submit('emp1', 'loc1', '2026-06-15', '2026-06-16', IDEM_KEY);
+    const newRequest = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-15',
+      '2026-06-16',
+      IDEM_KEY,
+    );
 
     // A NEW request must be created (different id)
     expect(newRequest.id).not.toBe(original.id);
@@ -500,13 +582,25 @@ describe('E28 — Resubmit after EXPIRE with same form key', () => {
   it('mangles the old expired row idempotency key to free the UNIQUE constraint', async () => {
     const IDEM_KEY = 'key-e28-mangle';
 
-    const original = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', IDEM_KEY);
+    const original = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-02',
+      IDEM_KEY,
+    );
 
     clock.advance(15 * 24 * 60 * 60 * 1000);
     await runReaperOnce(reaper);
 
     // Resubmit — creates new row
-    const newRequest = await svc.submit('emp1', 'loc1', '2026-06-15', '2026-06-16', IDEM_KEY);
+    const newRequest = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-15',
+      '2026-06-16',
+      IDEM_KEY,
+    );
 
     // Both rows should exist in DB
     const allRows = await requestRepo.find();
@@ -526,12 +620,20 @@ describe('E28 — Resubmit after EXPIRE with same form key', () => {
     const IDEM_KEY = 'key-e28-approve';
 
     // Submit and expire original
-    const original = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', IDEM_KEY);
+    const original = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-02',
+      IDEM_KEY,
+    );
     clock.advance(15 * 24 * 60 * 60 * 1000);
     await runReaperOnce(reaper);
 
     // Reload: original should be expired, reserved released
-    const expiredRow = await requestRepo.findOneOrFail({ where: { id: original.id } });
+    const expiredRow = await requestRepo.findOneOrFail({
+      where: { id: original.id },
+    });
     expect(expiredRow.status).toBe(RequestStatus.EXPIRED);
 
     // Verify balance released (reserved back to 0 after expiry)
@@ -542,7 +644,13 @@ describe('E28 — Resubmit after EXPIRE with same form key', () => {
 
     // Resubmit with same key but future dates
     // Clock is now 2026-05-27 + 15 days = 2026-06-11; use Jun 15-16
-    const newRequest = await svc.submit('emp1', 'loc1', '2026-06-15', '2026-06-16', IDEM_KEY);
+    const newRequest = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-15',
+      '2026-06-16',
+      IDEM_KEY,
+    );
     expect(newRequest.status).toBe(RequestStatus.PENDING);
 
     // Approve the new request: Pure Outbox model → PENDING_SYNC + Outbox(FILE, PENDING)
@@ -550,14 +658,18 @@ describe('E28 — Resubmit after EXPIRE with same form key', () => {
     expect(approved.status).toBe(RequestStatus.PENDING_SYNC);
 
     // Verify outbox FILE row was written
-    const outboxRows = await outboxRepo.find({ where: { aggregateId: newRequest.id } });
+    const outboxRows = await outboxRepo.find({
+      where: { aggregateId: newRequest.id },
+    });
     const fileRow = outboxRows.find((o) => o.status === OutboxStatus.PENDING);
     expect(fileRow).toBeDefined();
 
     // Run dispatcher → should mark FILE as SENT and move request to APPROVED
     await runDispatcherOnce(dispatcher);
 
-    const finalRequest = await requestRepo.findOneOrFail({ where: { id: newRequest.id } });
+    const finalRequest = await requestRepo.findOneOrFail({
+      where: { id: newRequest.id },
+    });
     expect(finalRequest.status).toBe(RequestStatus.APPROVED);
     expect(finalRequest.hcmAckAt).not.toBeNull();
   });

@@ -10,7 +10,12 @@ import { HcmModule } from '../hcm/hcm.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Balance, TimeOffRequest, ReconciliationEvent, Outbox]),
+    TypeOrmModule.forFeature([
+      Balance,
+      TimeOffRequest,
+      ReconciliationEvent,
+      Outbox,
+    ]),
     // forwardRef resolves the BalanceModule ↔ HcmModule circular dependency.
     // HcmModule exports HCM_CLIENT which BalanceService needs for ADR-014
     // lazy hydration; HcmModule imports BalanceModule for OutboxDispatcherService.

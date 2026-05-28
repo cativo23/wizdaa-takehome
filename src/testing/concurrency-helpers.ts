@@ -32,7 +32,11 @@
  *   await runReaperOnce(reaper);
  */
 
-import { BalanceLockService, balanceKey, LatchHandle } from '../common/lock/balance-lock.service';
+import {
+  BalanceLockService,
+  balanceKey,
+  LatchHandle,
+} from '../common/lock/balance-lock.service';
 import { OutboxDispatcherService } from '../hcm/outbox-dispatcher.service';
 import { ReservationReaperService } from '../reservation-reaper/reservation-reaper.service';
 

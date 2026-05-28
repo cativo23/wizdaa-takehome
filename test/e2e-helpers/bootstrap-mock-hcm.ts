@@ -12,7 +12,11 @@ export interface MockHcmHandles {
   resetStore(): Promise<void>;
   setScenario(s: HcmScenario): Promise<void>;
   /** Seed a balance via the HTTP control API (avoids module-singleton split). */
-  seedBalance(employeeId: string, locationId: string, balance: number): Promise<void>;
+  seedBalance(
+    employeeId: string,
+    locationId: string,
+    balance: number,
+  ): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -25,7 +29,11 @@ export async function bootstrapMockHcm(): Promise<MockHcmHandles> {
 
   // Must match src/mock-hcm/main.ts exactly
   app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: false }),
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: false,
+    }),
   );
 
   // Listen on ephemeral port so HcmClientService can reach it over HTTP
@@ -53,7 +61,11 @@ export async function bootstrapMockHcm(): Promise<MockHcmHandles> {
         .send({ scenario: s })
         .expect(200);
     },
-    async seedBalance(employeeId: string, locationId: string, balance: number): Promise<void> {
+    async seedBalance(
+      employeeId: string,
+      locationId: string,
+      balance: number,
+    ): Promise<void> {
       await supertest(app.getHttpServer())
         .post('/_control/refresh')
         .send({ employeeId, locationId, balance })

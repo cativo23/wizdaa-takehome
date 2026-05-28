@@ -78,7 +78,9 @@ export class BalanceController {
       );
     }
     if (role !== 'manager') {
-      throw new ForbiddenException('Only managers may resolve balance reviews.');
+      throw new ForbiddenException(
+        'Only managers may resolve balance reviews.',
+      );
     }
     await this.balanceService.resolveReview(body.employeeId, body.locationId);
     return { ok: true };

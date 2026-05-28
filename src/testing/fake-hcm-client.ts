@@ -9,7 +9,10 @@
  * with zero I/O overhead.
  */
 
-import type { HcmClient, HcmGetBalanceOptions } from '../hcm/contracts/hcm-client.interface';
+import type {
+  HcmClient,
+  HcmGetBalanceOptions,
+} from '../hcm/contracts/hcm-client.interface';
 import type {
   HcmBalance,
   FileTimeOffCommand,
@@ -128,8 +131,12 @@ export class FakeHcmClient implements HcmClient {
    * observable effect. Production behaviour (fast vs. full retry) is covered by
    * the real-integration spec (src/__tests__/hcm-real-integration.spec.ts).
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async getBalance(employeeId: string, locationId: string, opts?: HcmGetBalanceOptions): Promise<HcmBalance> {
+
+  async getBalance(
+    employeeId: string,
+    locationId: string,
+    opts?: HcmGetBalanceOptions,
+  ): Promise<HcmBalance> {
     this.callsTo.getBalance += 1;
 
     if (this.scenario === 'timeout') {
@@ -242,7 +249,9 @@ export class FakeHcmClient implements HcmClient {
    * - ignore-idempotency-key → skips dedup, applies every call.
    * - all others           → same as correct.
    */
-  async reverseTimeOff(cmd: ReverseTimeOffCommand): Promise<ReverseTimeOffResult> {
+  async reverseTimeOff(
+    cmd: ReverseTimeOffCommand,
+  ): Promise<ReverseTimeOffResult> {
     this.callsTo.reverseTimeOff += 1;
 
     if (this.scenario === 'timeout') {

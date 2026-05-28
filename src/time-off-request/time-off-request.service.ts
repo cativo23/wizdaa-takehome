@@ -18,12 +18,18 @@ import {
   TERMINAL_STATUSES,
   ACTIVE_STATUSES,
 } from '../entities/enums';
-import { BalanceLockService, balanceKey } from '../common/lock/balance-lock.service';
+import {
+  BalanceLockService,
+  balanceKey,
+} from '../common/lock/balance-lock.service';
 import { BalanceService } from '../balance/balance.service';
 import { CLOCK } from '../common/clock/clock.tokens';
 import type { Clock } from '../common/clock/clock.interface';
 import type { HcmClient } from '../hcm/contracts/hcm-client.interface';
-import type { FileTimeOffCommand, ReverseTimeOffCommand } from '../hcm/contracts/hcm.types';
+import type {
+  FileTimeOffCommand,
+  ReverseTimeOffCommand,
+} from '../hcm/contracts/hcm.types';
 import { HCM_CLIENT } from '../hcm/hcm.tokens';
 import { HcmUnavailableError } from '../hcm/hcm.errors';
 import { AppConfigService } from '../config/app-config.service';
@@ -267,7 +273,11 @@ export class TimeOffRequestService {
       const days = this.countBusinessDays(startDate, endDate);
 
       // ③ Availability check (ADR-001 local guard, E1)
-      await this.balanceService.validateAvailability(employeeId, locationId, days);
+      await this.balanceService.validateAvailability(
+        employeeId,
+        locationId,
+        days,
+      );
 
       // ④⑤ Create PENDING request + reserve balance atomically
       const now = this.clock.now();
@@ -297,12 +307,19 @@ export class TimeOffRequestService {
           await manager.update(
             TimeOffRequest,
             { id: existing.id },
-            { idempotencyKey: `${existing.idempotencyKey}:terminal:${existing.id}` },
+            {
+              idempotencyKey: `${existing.idempotencyKey}:terminal:${existing.id}`,
+            },
           );
         }
         await manager.save(TimeOffRequest, request);
         // Pass manager so balance + request writes commit in one transaction (ADR-013/Gap B).
-        await this.balanceService.reserve(employeeId, locationId, days, manager);
+        await this.balanceService.reserve(
+          employeeId,
+          locationId,
+          days,
+          manager,
+        );
       });
 
       // Reload to get DB-generated fields (id, version, createdAt, updatedAt).
@@ -329,18 +346,26 @@ export class TimeOffRequestService {
    *   5. Write Outbox(FILE) + set status = PENDING_SYNC — all in ONE transaction.
    *
    * @param requestId  - UUID of the TimeOffRequest.
-   * @param managerId  - Authenticated manager ID (for audit; not stored on request in v1).
+   * @param _managerId - Authenticated manager ID (for audit; not stored on request in v1).
    */
-  async approve(requestId: string, managerId: string): Promise<TimeOffRequest> {
+  async approve(
+    requestId: string,
+    _managerId: string,
+  ): Promise<TimeOffRequest> {
     // Load first (outside lock) to get employeeId/locationId for the key.
-    const preload = await this.requestRepo.findOne({ where: { id: requestId } });
+    const preload = await this.requestRepo.findOne({
+      where: { id: requestId },
+    });
     if (!preload) {
       throw new NotFoundException(`TimeOffRequest ${requestId} not found`);
     }
 
     // Pre-warm: ensures getBalance's cold-path lock (ADR-014) fires before we hold
     // our own lock on the same key — avoids re-entrant deadlock (ADR-010 + ADR-014).
-    await this.balanceService.getBalance(preload.employeeId, preload.locationId);
+    await this.balanceService.getBalance(
+      preload.employeeId,
+      preload.locationId,
+    );
 
     const key = balanceKey(preload.employeeId, preload.locationId);
     return this.lockService.runExclusive(key, async () => {
@@ -364,7 +389,12 @@ export class TimeOffRequestService {
         // startDate is in the past — reject and release reservation (E18).
         // Wrap in own transaction so release + request save are atomic (ADR-013/Gap B).
         await this.dataSource.transaction(async (manager) => {
-          await this.balanceService.release(req.employeeId, req.locationId, req.days, manager);
+          await this.balanceService.release(
+            req.employeeId,
+            req.locationId,
+            req.days,
+            manager,
+          );
           req.status = RequestStatus.REJECTED;
           await manager.save(TimeOffRequest, req);
         });
@@ -382,18 +412,30 @@ export class TimeOffRequestService {
       // fast rather than after 31 s of backoff.
       let hcmRefreshFailed = false;
       try {
-        const snapshot = await this.hcmClient.getBalance(req.employeeId, req.locationId, { retry: false });
+        const snapshot = await this.hcmClient.getBalance(
+          req.employeeId,
+          req.locationId,
+          { retry: false },
+        );
         await this.balanceService.applyHcmSnapshot(snapshot);
 
         // Re-validate after snapshot update (ADR-001 step 3, E10).
         // Use available - reserved for the free-days check (A1 fix applied consistently).
-        const balance = await this.balanceService.getBalance(req.employeeId, req.locationId);
+        const balance = await this.balanceService.getBalance(
+          req.employeeId,
+          req.locationId,
+        );
         const free = balance.available - balance.reserved;
         if (free < req.days) {
           // Insufficient after HCM refresh — reject and release (E10).
           // Wrap in own transaction for atomicity (ADR-013/Gap B).
           await this.dataSource.transaction(async (manager) => {
-            await this.balanceService.release(req.employeeId, req.locationId, req.days, manager);
+            await this.balanceService.release(
+              req.employeeId,
+              req.locationId,
+              req.days,
+              manager,
+            );
             req.status = RequestStatus.REJECTED;
             await manager.save(TimeOffRequest, req);
           });
@@ -413,12 +455,21 @@ export class TimeOffRequestService {
       const now = this.clock.now();
       await this.dataSource.transaction(async (manager) => {
         // Commit: available -= days, reserved -= days. Pass manager for atomicity (ADR-013/Gap B).
-        await this.balanceService.commit(req.employeeId, req.locationId, req.days, manager);
+        await this.balanceService.commit(
+          req.employeeId,
+          req.locationId,
+          req.days,
+          manager,
+        );
 
         req.committedAt = now;
         req.status = RequestStatus.PENDING_SYNC;
 
-        const outboxRow = this.buildOutboxRow(req, OutboxOperation.FILE, manager);
+        const outboxRow = this.buildOutboxRow(
+          req,
+          OutboxOperation.FILE,
+          manager,
+        );
         await manager.save(Outbox, outboxRow);
         await manager.save(TimeOffRequest, req);
       });
@@ -448,14 +499,19 @@ export class TimeOffRequestService {
     managerId: string,
     reason?: string,
   ): Promise<TimeOffRequest> {
-    const preload = await this.requestRepo.findOne({ where: { id: requestId } });
+    const preload = await this.requestRepo.findOne({
+      where: { id: requestId },
+    });
     if (!preload) {
       throw new NotFoundException(`TimeOffRequest ${requestId} not found`);
     }
 
     // Pre-warm: ensures getBalance's cold-path lock (ADR-014) fires before we hold
     // our own lock on the same key — avoids re-entrant deadlock (ADR-010 + ADR-014).
-    await this.balanceService.getBalance(preload.employeeId, preload.locationId);
+    await this.balanceService.getBalance(
+      preload.employeeId,
+      preload.locationId,
+    );
 
     const key = balanceKey(preload.employeeId, preload.locationId);
     return this.lockService.runExclusive(key, async () => {
@@ -480,13 +536,22 @@ export class TimeOffRequestService {
         if (req.status === RequestStatus.PENDING) {
           // PENDING: release the reservation (reserved -= days). available is untouched
           // because reserve() only incremented reserved (A1/A2 fix model).
-          await this.balanceService.release(req.employeeId, req.locationId, req.days, manager);
-
+          await this.balanceService.release(
+            req.employeeId,
+            req.locationId,
+            req.days,
+            manager,
+          );
         } else {
           // PENDING_SYNC: commit() already ran — available was decremented and reserved
           // was cleared. We must call restore() to add the days back to available (A4 fix).
           // Also void the in-flight FILE outbox row so HCM is not contacted after reject.
-          await this.balanceService.restore(req.employeeId, req.locationId, req.days, manager);
+          await this.balanceService.restore(
+            req.employeeId,
+            req.locationId,
+            req.days,
+            manager,
+          );
           await this.voidPendingFileRows(requestId, manager);
         }
 
@@ -522,15 +587,23 @@ export class TimeOffRequestService {
    * @param requestId
    * @param _principalId - Caller identity; ownership is enforced by the controller before this is called.
    */
-  async cancel(requestId: string, _principalId: string): Promise<TimeOffRequest> {
-    const preload = await this.requestRepo.findOne({ where: { id: requestId } });
+  async cancel(
+    requestId: string,
+    _principalId: string,
+  ): Promise<TimeOffRequest> {
+    const preload = await this.requestRepo.findOne({
+      where: { id: requestId },
+    });
     if (!preload) {
       throw new NotFoundException(`TimeOffRequest ${requestId} not found`);
     }
 
     // Pre-warm: ensures getBalance's cold-path lock (ADR-014) fires before we hold
     // our own lock on the same key — avoids re-entrant deadlock (ADR-010 + ADR-014).
-    await this.balanceService.getBalance(preload.employeeId, preload.locationId);
+    await this.balanceService.getBalance(
+      preload.employeeId,
+      preload.locationId,
+    );
 
     const key = balanceKey(preload.employeeId, preload.locationId);
     return this.lockService.runExclusive(key, async () => {
@@ -558,8 +631,12 @@ export class TimeOffRequestService {
         if (req.status === RequestStatus.PENDING) {
           // PENDING: void pending FILE rows + release reservation. Pass manager (ADR-013/Gap B).
           await this.voidPendingFileRows(requestId, manager);
-          await this.balanceService.release(req.employeeId, req.locationId, req.days, manager);
-
+          await this.balanceService.release(
+            req.employeeId,
+            req.locationId,
+            req.days,
+            manager,
+          );
         } else if (req.status === RequestStatus.PENDING_SYNC) {
           // PENDING_SYNC: commit already happened (available -= days, reserved -= days).
           // So we restore (available += days) regardless of FILE status.
@@ -576,19 +653,41 @@ export class TimeOffRequestService {
           if (!fileSent) {
             // FILE not yet sent — void it; restore balance. Pass manager (ADR-013/Gap B).
             await this.voidPendingFileRows(requestId, manager);
-            await this.balanceService.restore(req.employeeId, req.locationId, req.days, manager);
+            await this.balanceService.restore(
+              req.employeeId,
+              req.locationId,
+              req.days,
+              manager,
+            );
           } else {
             // FILE already sent (landed at HCM) — restore balance + enqueue REVERSE (E27).
             // Pass manager (ADR-013/Gap B).
-            await this.balanceService.restore(req.employeeId, req.locationId, req.days, manager);
-            const reverseRow = this.buildOutboxRow(req, OutboxOperation.REVERSE, manager);
+            await this.balanceService.restore(
+              req.employeeId,
+              req.locationId,
+              req.days,
+              manager,
+            );
+            const reverseRow = this.buildOutboxRow(
+              req,
+              OutboxOperation.REVERSE,
+              manager,
+            );
             await manager.save(Outbox, reverseRow);
           }
-
         } else {
           // APPROVED: restore available + enqueue REVERSE (E9/FR-6). Pass manager (ADR-013/Gap B).
-          await this.balanceService.restore(req.employeeId, req.locationId, req.days, manager);
-          const reverseRow = this.buildOutboxRow(req, OutboxOperation.REVERSE, manager);
+          await this.balanceService.restore(
+            req.employeeId,
+            req.locationId,
+            req.days,
+            manager,
+          );
+          const reverseRow = this.buildOutboxRow(
+            req,
+            OutboxOperation.REVERSE,
+            manager,
+          );
           await manager.save(Outbox, reverseRow);
         }
 
@@ -631,15 +730,24 @@ export class TimeOffRequestService {
       if (req.status === RequestStatus.PENDING) {
         // PENDING: release reservation (reserved -= days). available unchanged because
         // reserve() only incremented reserved (A1/A2 fix model). Pass manager (ADR-013/Gap B).
-        await this.balanceService.release(req.employeeId, req.locationId, req.days, manager);
+        await this.balanceService.release(
+          req.employeeId,
+          req.locationId,
+          req.days,
+          manager,
+        );
         // Void any pending FILE outbox row in the same transaction (B2/E24).
         await this.voidPendingFileRows(requestId, manager);
-
       } else {
         // PENDING_SYNC: commit() already ran — available was decremented and reserved
         // was cleared. We must call restore() to add the days back to available (A4 fix).
         // Also void the in-flight FILE outbox row so HCM is not contacted after expiry.
-        await this.balanceService.restore(req.employeeId, req.locationId, req.days, manager);
+        await this.balanceService.restore(
+          req.employeeId,
+          req.locationId,
+          req.days,
+          manager,
+        );
         await this.voidPendingFileRows(requestId, manager);
       }
 

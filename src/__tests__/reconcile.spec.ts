@@ -38,7 +38,10 @@ import {
 
 import { ReconciliationService } from '../reconciliation/reconciliation.service';
 import { BalanceService } from '../balance/balance.service';
-import { BalanceLockService, balanceKey } from '../common/lock/balance-lock.service';
+import {
+  BalanceLockService,
+  balanceKey,
+} from '../common/lock/balance-lock.service';
 import { OutboxDispatcherService } from '../hcm/outbox-dispatcher.service';
 import { BatchCorpus } from '../hcm/contracts/hcm.types';
 
@@ -130,7 +133,9 @@ describe('E6 — Batch corpus < local mid-pending (unacked APPROVED replayed)', 
     // reserved = 0 (no PENDING requests)
     expect(balance?.reserved).toBe(0);
     // lastHcmAsOf advances to corpus.asOf
-    expect(balance?.lastHcmAsOf?.toISOString()).toBe('2026-06-15T00:00:00.000Z');
+    expect(balance?.lastHcmAsOf?.toISOString()).toBe(
+      '2026-06-15T00:00:00.000Z',
+    );
 
     // A BatchSyncLog entry must have been written
     const logEntry = await batchLogRepo.findOne({ where: { sequence: 1 } });
@@ -414,7 +419,12 @@ describe('E13 — Stale / out-of-order batch rejected (ADR-009)', () => {
       sequence: 2,
       asOf: '2026-06-15T00:00:00Z',
       balances: [
-        { employeeId: 'emp1', locationId: 'loc1', balance: 10, asOf: '2026-06-15T00:00:00Z' },
+        {
+          employeeId: 'emp1',
+          locationId: 'loc1',
+          balance: 10,
+          asOf: '2026-06-15T00:00:00Z',
+        },
       ],
     };
 
@@ -432,7 +442,12 @@ describe('E13 — Stale / out-of-order batch rejected (ADR-009)', () => {
       sequence: 1,
       asOf: '2026-06-01T00:00:00Z',
       balances: [
-        { employeeId: 'emp1', locationId: 'loc1', balance: 5, asOf: '2026-06-01T00:00:00Z' },
+        {
+          employeeId: 'emp1',
+          locationId: 'loc1',
+          balance: 5,
+          asOf: '2026-06-01T00:00:00Z',
+        },
       ],
     };
 
@@ -468,14 +483,28 @@ describe('E13 — Stale / out-of-order batch rejected (ADR-009)', () => {
     await reconcileSvc.ingestBatch({
       sequence: 2,
       asOf: '2026-06-15T00:00:00Z',
-      balances: [{ employeeId: 'emp1', locationId: 'loc1', balance: 10, asOf: '2026-06-15T00:00:00Z' }],
+      balances: [
+        {
+          employeeId: 'emp1',
+          locationId: 'loc1',
+          balance: 10,
+          asOf: '2026-06-15T00:00:00Z',
+        },
+      ],
     });
 
     // Duplicate ingest (same sequence=2) must be rejected
     await reconcileSvc.ingestBatch({
       sequence: 2,
       asOf: '2026-06-15T00:00:00Z',
-      balances: [{ employeeId: 'emp1', locationId: 'loc1', balance: 10, asOf: '2026-06-15T00:00:00Z' }],
+      balances: [
+        {
+          employeeId: 'emp1',
+          locationId: 'loc1',
+          balance: 10,
+          asOf: '2026-06-15T00:00:00Z',
+        },
+      ],
     });
 
     const staleEvent = await reconEventRepo.findOne({
@@ -557,7 +586,9 @@ describe('E14 — Approval acked by HCM after snapshot asOf (replayed, ADR-003)'
     // available = hcmValue(10) - unackedDays(2) = 8
     expect(balance?.available).toBe(8);
     // lastHcmAsOf updated to snapshot asOf
-    expect(balance?.lastHcmAsOf?.toISOString()).toBe('2026-06-10T00:00:00.000Z');
+    expect(balance?.lastHcmAsOf?.toISOString()).toBe(
+      '2026-06-10T00:00:00.000Z',
+    );
 
     // ReconciliationEvent must be REPLAYED or NO_CHANGE
     const event = await getLatestReconEvent(reconEventRepo);
@@ -664,7 +695,14 @@ describe('E26 — Reconcile drives available negative (FLAGGED_NEGATIVE + manage
     const corpus: BatchCorpus = {
       sequence: 1,
       asOf: '2026-06-15T00:00:00Z',
-      balances: [{ employeeId: 'emp1', locationId: 'loc1', balance: 3, asOf: '2026-06-15T00:00:00Z' }],
+      balances: [
+        {
+          employeeId: 'emp1',
+          locationId: 'loc1',
+          balance: 3,
+          asOf: '2026-06-15T00:00:00Z',
+        },
+      ],
     };
 
     await reconcileSvc.ingestBatch(corpus);
@@ -724,7 +762,12 @@ describe('PENDING_SYNC with hcmAckAt=null is always treated as unacked', () => {
       sequence: 1,
       asOf: '2026-06-15T00:00:00Z',
       balances: [
-        { employeeId: 'emp1', locationId: 'loc1', balance: 9, asOf: '2026-06-15T00:00:00Z' },
+        {
+          employeeId: 'emp1',
+          locationId: 'loc1',
+          balance: 9,
+          asOf: '2026-06-15T00:00:00Z',
+        },
       ],
     };
 
@@ -790,7 +833,12 @@ describe('Pending REVERSE outbox for CANCELLED request credits days back', () =>
       sequence: 1,
       asOf: '2026-06-15T00:00:00Z',
       balances: [
-        { employeeId: 'emp1', locationId: 'loc1', balance: 6, asOf: '2026-06-15T00:00:00Z' },
+        {
+          employeeId: 'emp1',
+          locationId: 'loc1',
+          balance: 6,
+          asOf: '2026-06-15T00:00:00Z',
+        },
       ],
     };
 

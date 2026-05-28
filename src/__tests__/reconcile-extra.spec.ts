@@ -21,7 +21,11 @@ import { ReconResolution } from '../entities/enums';
 // ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
-async function getBalance(repo: Repository<Balance>, emp = 'emp1', loc = 'loc1') {
+async function getBalance(
+  repo: Repository<Balance>,
+  emp = 'emp1',
+  loc = 'loc1',
+) {
   return repo.findOne({ where: { employeeId: emp, locationId: loc } });
 }
 
@@ -72,7 +76,9 @@ describe('ReconciliationService.reconcileBalance (public wrapper, one-balance in
       order: { createdAt: 'DESC' },
     });
     expect(event).not.toBeNull();
-    expect([ReconResolution.REPLAYED, ReconResolution.NO_CHANGE]).toContain(event?.resolution);
+    expect([ReconResolution.REPLAYED, ReconResolution.NO_CHANGE]).toContain(
+      event?.resolution,
+    );
   });
 
   it('creates the zero balance row on first call then applies hcmValue', async () => {
@@ -92,7 +98,12 @@ describe('ReconciliationService.reconcileBalance (public wrapper, one-balance in
   it('sets needsReview when hcmValue drives available negative', async () => {
     await seedBalance(balanceRepo, { available: 10, reserved: 0 });
     // hcmValue = -3 (pathological but theoretically possible)
-    await reconcileSvc.reconcileBalance('emp1', 'loc1', -3, new Date('2026-06-15T00:00:00Z'));
+    await reconcileSvc.reconcileBalance(
+      'emp1',
+      'loc1',
+      -3,
+      new Date('2026-06-15T00:00:00Z'),
+    );
 
     const balance = await getBalance(balanceRepo);
     expect(balance?.available).toBe(-3);

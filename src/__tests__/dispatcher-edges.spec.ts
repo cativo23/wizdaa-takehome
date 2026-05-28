@@ -74,7 +74,9 @@ describe('OutboxDispatcherService — defensive branches', () => {
   // 1. dispatchOne with a non-existent outboxId → no-op
   // -------------------------------------------------------------------------
   it('dispatchOne with non-existent outboxId is a no-op (no HCM call, no throw)', async () => {
-    await expect(dispatcher.dispatchOne(nonExistentUuid())).resolves.toBeUndefined();
+    await expect(
+      dispatcher.dispatchOne(nonExistentUuid()),
+    ).resolves.toBeUndefined();
 
     expect(hcm.callsTo.fileTimeOff).toBe(0);
     expect(hcm.callsTo.reverseTimeOff).toBe(0);
@@ -85,7 +87,10 @@ describe('OutboxDispatcherService — defensive branches', () => {
   // -------------------------------------------------------------------------
   it('dispatchOne on already-SENT outbox row returns early without calling HCM', async () => {
     await seedBalance(balanceRepo, { available: 10 });
-    const req = await seedRequest(requestRepo, { status: RequestStatus.APPROVED, days: 2 });
+    const req = await seedRequest(requestRepo, {
+      status: RequestStatus.APPROVED,
+      days: 2,
+    });
     const outbox = await seedOutbox(outboxRepo, {
       aggregateId: req.id,
       operation: OutboxOperation.FILE,
@@ -105,7 +110,10 @@ describe('OutboxDispatcherService — defensive branches', () => {
   // -------------------------------------------------------------------------
   it('dispatchOne on a VOIDED outbox row returns early without calling HCM', async () => {
     await seedBalance(balanceRepo, { available: 10 });
-    const req = await seedRequest(requestRepo, { status: RequestStatus.CANCELLED, days: 2 });
+    const req = await seedRequest(requestRepo, {
+      status: RequestStatus.CANCELLED,
+      days: 2,
+    });
     const outbox = await seedOutbox(outboxRepo, {
       aggregateId: req.id,
       operation: OutboxOperation.FILE,
@@ -176,20 +184,22 @@ describe('OutboxDispatcherService — defensive branches', () => {
     // Spy to return the request object for the pre-check call, but delete it from DB immediately.
     const realFindOne = requestRepo.findOne.bind(requestRepo);
     let preCheckDone = false;
-    const spy = jest.spyOn(requestRepo, 'findOne').mockImplementation(async (opts: any) => {
-      if (!preCheckDone) {
-        preCheckDone = true;
-        // Return the real result for the pre-check
-        const result = await realFindOne(opts);
-        // Now delete from DB so that the in-txn EntityManager finds nothing
-        if (result) {
-          await requestRepo.delete({ id: result.id });
+    const spy = jest
+      .spyOn(requestRepo, 'findOne')
+      .mockImplementation(async (opts: any) => {
+        if (!preCheckDone) {
+          preCheckDone = true;
+          // Return the real result for the pre-check
+          const result = await realFindOne(opts);
+          // Now delete from DB so that the in-txn EntityManager finds nothing
+          if (result) {
+            await requestRepo.delete({ id: result.id });
+          }
+          return result;
         }
-        return result;
-      }
-      // Subsequent calls use real DB
-      return realFindOne(opts);
-    });
+        // Subsequent calls use real DB
+        return realFindOne(opts);
+      });
 
     await dispatcher.dispatchOne(outbox.id);
 

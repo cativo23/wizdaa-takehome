@@ -19,10 +19,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import axios from 'axios';
-import type {
-  HcmBalance,
-  BatchCorpus,
-} from '../hcm/contracts/hcm.types.js';
+import type { HcmBalance, BatchCorpus } from '../hcm/contracts/hcm.types.js';
 import {
   balanceStore,
   storeKey,
@@ -54,7 +51,10 @@ export class ControlController {
   @Post('scenario')
   @HttpCode(HttpStatus.OK)
   setScenario(@Body() body: ScenarioDto): { scenario: string } {
-    if (!body?.scenario || !VALID_SCENARIOS.includes(body.scenario as HcmScenario)) {
+    if (
+      !body?.scenario ||
+      !VALID_SCENARIOS.includes(body.scenario as HcmScenario)
+    ) {
       throw new BadRequestException(
         `Invalid scenario. Valid values: ${VALID_SCENARIOS.join(', ')}`,
       );
@@ -91,7 +91,12 @@ export class ControlController {
     };
     balanceStore.set(key, entry);
 
-    return { employeeId: body.employeeId, locationId: body.locationId, balance: body.balance, asOf };
+    return {
+      employeeId: body.employeeId,
+      locationId: body.locationId,
+      balance: body.balance,
+      asOf,
+    };
   }
 
   /**
@@ -135,7 +140,7 @@ export class ControlController {
         headers: { 'Content-Type': 'application/json' },
         timeout: 10_000,
       });
-      return { ok: true, statusCode: response.status as number, corpus };
+      return { ok: true, statusCode: response.status, corpus };
     } catch (err: unknown) {
       const status =
         err !== null &&
@@ -143,7 +148,7 @@ export class ControlController {
         'response' in err &&
         err.response !== null &&
         typeof err.response === 'object' &&
-        'status' in (err.response as object)
+        'status' in err.response
           ? (err.response as { status: number }).status
           : 500;
       return { ok: false, statusCode: status, corpus };
@@ -162,7 +167,8 @@ export class ControlController {
     const scenario = getScenario();
     const asOf = asOfOverride ?? new Date().toISOString();
     // If caller explicitly supplies a sequence, use it; otherwise advance the counter.
-    const sequence = sequenceOverride !== undefined ? sequenceOverride : getNextSequence();
+    const sequence =
+      sequenceOverride !== undefined ? sequenceOverride : getNextSequence();
 
     let balances: HcmBalance[];
 

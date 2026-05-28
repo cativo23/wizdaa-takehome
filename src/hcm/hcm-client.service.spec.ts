@@ -15,7 +15,12 @@ import { HcmUnavailableError } from './hcm.errors';
 // Stub factories
 // ---------------------------------------------------------------------------
 
-function makeConfig(overrides: Partial<{ hcmRetryMaxAttempts: number; hcmRetryBackoffMs: number }> = {}) {
+function makeConfig(
+  overrides: Partial<{
+    hcmRetryMaxAttempts: number;
+    hcmRetryBackoffMs: number;
+  }> = {},
+) {
   return {
     hcmBaseUrl: 'http://test',
     hcmRetryMaxAttempts: overrides.hcmRetryMaxAttempts ?? 3,
@@ -82,7 +87,9 @@ describe('HcmClientService.getBalance', () => {
     expect(http.get).toHaveBeenCalledTimes(1);
     expect(http.get).toHaveBeenCalledWith(
       'http://test/hcm/balance',
-      expect.objectContaining({ params: { employeeId: 'emp1', locationId: 'loc1' } }),
+      expect.objectContaining({
+        params: { employeeId: 'emp1', locationId: 'loc1' },
+      }),
     );
   });
 
@@ -90,9 +97,14 @@ describe('HcmClientService.getBalance', () => {
     const maxAttempts = 3;
     const http = makeHttpService();
     http.get.mockReturnValue(throwError(() => networkError()));
-    const svc = buildService(http, makeConfig({ hcmRetryMaxAttempts: maxAttempts }));
+    const svc = buildService(
+      http,
+      makeConfig({ hcmRetryMaxAttempts: maxAttempts }),
+    );
 
-    await expect(svc.getBalance('emp1', 'loc1')).rejects.toBeInstanceOf(HcmUnavailableError);
+    await expect(svc.getBalance('emp1', 'loc1')).rejects.toBeInstanceOf(
+      HcmUnavailableError,
+    );
     expect(http.get).toHaveBeenCalledTimes(maxAttempts);
   });
 
@@ -101,7 +113,9 @@ describe('HcmClientService.getBalance', () => {
     http.get.mockReturnValue(throwError(() => httpError(404)));
     const svc = buildService(http, makeConfig({ hcmRetryMaxAttempts: 3 }));
 
-    await expect(svc.getBalance('emp1', 'loc1')).rejects.toBeInstanceOf(HcmUnavailableError);
+    await expect(svc.getBalance('emp1', 'loc1')).rejects.toBeInstanceOf(
+      HcmUnavailableError,
+    );
     // 4xx is NOT retryable → only one attempt
     expect(http.get).toHaveBeenCalledTimes(1);
   });
@@ -141,7 +155,10 @@ describe('HcmClientService.fileTimeOff', () => {
     const maxAttempts = 3;
     const http = makeHttpService();
     http.post.mockReturnValue(throwError(() => networkError('ETIMEDOUT')));
-    const svc = buildService(http, makeConfig({ hcmRetryMaxAttempts: maxAttempts }));
+    const svc = buildService(
+      http,
+      makeConfig({ hcmRetryMaxAttempts: maxAttempts }),
+    );
 
     const result = await svc.fileTimeOff(cmd);
 
@@ -152,7 +169,9 @@ describe('HcmClientService.fileTimeOff', () => {
 
   it('4xx business error: returns { ok: false, errorHint } immediately without retrying', async () => {
     const http = makeHttpService();
-    http.post.mockReturnValue(throwError(() => httpError(422, 'invalid dates')));
+    http.post.mockReturnValue(
+      throwError(() => httpError(422, 'invalid dates')),
+    );
     const svc = buildService(http, makeConfig({ hcmRetryMaxAttempts: 3 }));
 
     const result = await svc.fileTimeOff(cmd);
@@ -167,7 +186,10 @@ describe('HcmClientService.fileTimeOff', () => {
     const maxAttempts = 3;
     const http = makeHttpService();
     http.post.mockReturnValue(throwError(() => httpError(503)));
-    const svc = buildService(http, makeConfig({ hcmRetryMaxAttempts: maxAttempts }));
+    const svc = buildService(
+      http,
+      makeConfig({ hcmRetryMaxAttempts: maxAttempts }),
+    );
 
     const result = await svc.fileTimeOff(cmd);
 
@@ -179,7 +201,10 @@ describe('HcmClientService.fileTimeOff', () => {
   it('returns {ok:false} when HCM returns 200 with body.ok=false (silent-insufficient)', async () => {
     const http = makeHttpService();
     http.post.mockReturnValue(
-      of({ status: 200, data: { ok: false, errorHint: 'insufficient' } } as any),
+      of({
+        status: 200,
+        data: { ok: false, errorHint: 'insufficient' },
+      } as any),
     );
     const svc = buildService(http);
     const backoffSpy = jest.spyOn(svc as any, 'backoffDelay');
@@ -229,7 +254,10 @@ describe('HcmClientService.reverseTimeOff', () => {
     const maxAttempts = 3;
     const http = makeHttpService();
     http.post.mockReturnValue(throwError(() => networkError()));
-    const svc = buildService(http, makeConfig({ hcmRetryMaxAttempts: maxAttempts }));
+    const svc = buildService(
+      http,
+      makeConfig({ hcmRetryMaxAttempts: maxAttempts }),
+    );
 
     const result = await svc.reverseTimeOff(cmd);
 
@@ -297,8 +325,13 @@ describe('HcmClientService — coverage edge branches', () => {
   it('non-Axios error in fileTimeOff: treated as retryable, exhausts attempts, returns {ok:false,errorHint:"unknown_error"}', async () => {
     const maxAttempts = 2;
     const http = makeHttpService();
-    http.post.mockReturnValue(throwError(() => new Error('unexpected non-axios')));
-    const svc = buildService(http, makeConfig({ hcmRetryMaxAttempts: maxAttempts }));
+    http.post.mockReturnValue(
+      throwError(() => new Error('unexpected non-axios')),
+    );
+    const svc = buildService(
+      http,
+      makeConfig({ hcmRetryMaxAttempts: maxAttempts }),
+    );
 
     const result = await svc.fileTimeOff({
       employeeId: 'emp1',
@@ -317,7 +350,7 @@ describe('HcmClientService — coverage edge branches', () => {
   it('backoffDelay resolves after the configured delay (live — not mocked)', async () => {
     const http = makeHttpService();
     const config = makeConfig({ hcmRetryBackoffMs: 1 });
-    const svc = new HcmClientService(http, config as any);
+    const svc = new HcmClientService(http, config);
 
     // Call backoffDelay directly (protected — cast to any)
     await expect((svc as any).backoffDelay(1)).resolves.toBeUndefined();

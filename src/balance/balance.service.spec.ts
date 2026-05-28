@@ -67,13 +67,18 @@ describe('BalanceService.getBalance — creates zero record on first access', ()
   it('returns the existing row on second call (no duplicate inserts)', async () => {
     // Pre-seed with a warm row (lastHcmAsOf set) — ADR-014 hot path:
     // a row with lastHcmAsOf !== null is returned directly without an HCM call.
-    await seedBalance(balanceRepo, { available: 5, lastHcmAsOf: new Date('2026-05-01T00:00:00Z') });
+    await seedBalance(balanceRepo, {
+      available: 5,
+      lastHcmAsOf: new Date('2026-05-01T00:00:00Z'),
+    });
 
     const result = await balanceSvc.getBalance('emp1', 'loc1');
 
     expect(result.available).toBe(5);
     // Only one row exists
-    const count = await balanceRepo.count({ where: { employeeId: 'emp1', locationId: 'loc1' } });
+    const count = await balanceRepo.count({
+      where: { employeeId: 'emp1', locationId: 'loc1' },
+    });
     expect(count).toBe(1);
   });
 });
@@ -102,9 +107,9 @@ describe('BalanceService.validateAvailability — non-existent balance', () => {
     const before = await getRow(balanceRepo);
     expect(before).toBeNull();
 
-    await expect(balanceSvc.validateAvailability('emp1', 'loc1', 1)).rejects.toThrow(
-      ConflictException,
-    );
+    await expect(
+      balanceSvc.validateAvailability('emp1', 'loc1', 1),
+    ).rejects.toThrow(ConflictException);
 
     // The zero row must now exist (autocreated by getBalance inside validateAvailability)
     const after = await getRow(balanceRepo);
@@ -115,7 +120,9 @@ describe('BalanceService.validateAvailability — non-existent balance', () => {
 
   it('does NOT throw when days === 0 on an autocreated zero balance', async () => {
     // 0 days requested against 0 available is valid (0 - 0 = 0 >= 0)
-    await expect(balanceSvc.validateAvailability('emp1', 'loc1', 0)).resolves.toBeUndefined();
+    await expect(
+      balanceSvc.validateAvailability('emp1', 'loc1', 0),
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -145,17 +152,21 @@ describe('BalanceService.saveWithRetry — recovers from OptimisticLockVersionMi
     // Spy on balanceRepo.save: throw the optimistic-lock error once, then delegate to real impl.
     const originalSave = balanceRepo.save.bind(balanceRepo);
     let callCount = 0;
-    const saveSpy = jest.spyOn(balanceRepo, 'save').mockImplementation(async (...args: any[]) => {
-      callCount++;
-      if (callCount === 1) {
-        throw new OptimisticLockVersionMismatchError('Balance', 1, 2);
-      }
-      // Delegate to the real save on retry
-      return originalSave(...args);
-    });
+    const saveSpy = jest
+      .spyOn(balanceRepo, 'save')
+      .mockImplementation(async (...args: any[]) => {
+        callCount++;
+        if (callCount === 1) {
+          throw new OptimisticLockVersionMismatchError('Balance', 1, 2);
+        }
+        // Delegate to the real save on retry
+        return originalSave(...args);
+      });
 
     // reserve() exercises saveWithRetry internally
-    await expect(balanceSvc.reserve('emp1', 'loc1', 3)).resolves.toBeUndefined();
+    await expect(
+      balanceSvc.reserve('emp1', 'loc1', 3),
+    ).resolves.toBeUndefined();
 
     // save was called at least twice (once failed, once succeeded)
     expect(saveSpy).toHaveBeenCalledTimes(2);
@@ -171,9 +182,11 @@ describe('BalanceService.saveWithRetry — recovers from OptimisticLockVersionMi
     await seedBalance(balanceRepo, { available: 10, reserved: 0 });
 
     // Always throw OptimisticLockVersionMismatchError
-    const saveSpy = jest.spyOn(balanceRepo, 'save').mockRejectedValue(
-      new OptimisticLockVersionMismatchError('Balance', 1, 99),
-    );
+    const saveSpy = jest
+      .spyOn(balanceRepo, 'save')
+      .mockRejectedValue(
+        new OptimisticLockVersionMismatchError('Balance', 1, 99),
+      );
 
     // MAX_OPTIMISTIC_RETRIES = 5 → attempt + retry loop = 6 saves total before giving up
     await expect(balanceSvc.reserve('emp1', 'loc1', 1)).rejects.toBeInstanceOf(

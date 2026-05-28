@@ -4,14 +4,21 @@ import { Repository, DataSource, EntityManager } from 'typeorm';
 import { Interval } from '@nestjs/schedule';
 import { Outbox } from '../entities/outbox.entity';
 import { TimeOffRequest } from '../entities/time-off-request.entity';
-import { OutboxOperation, OutboxStatus, RequestStatus } from '../entities/enums';
+import {
+  OutboxOperation,
+  OutboxStatus,
+  RequestStatus,
+} from '../entities/enums';
 import type { HcmClient } from './contracts/hcm-client.interface';
 import type {
   FileTimeOffCommand,
   ReverseTimeOffCommand,
 } from './contracts/hcm.types';
 import { HCM_CLIENT } from './hcm.tokens';
-import { BalanceLockService, balanceKey } from '../common/lock/balance-lock.service';
+import {
+  BalanceLockService,
+  balanceKey,
+} from '../common/lock/balance-lock.service';
 import { BalanceService } from '../balance/balance.service';
 import { AppConfigService } from '../config/app-config.service';
 import { CLOCK } from '../common/clock/clock.tokens';
@@ -78,9 +85,13 @@ export class OutboxDispatcherService {
    */
   async dispatchOne(outboxId: string): Promise<void> {
     // --- Fast pre-check: load the row and bail early if not PENDING ---
-    const outboxPreCheck = await this.outboxRepo.findOne({ where: { id: outboxId } });
+    const outboxPreCheck = await this.outboxRepo.findOne({
+      where: { id: outboxId },
+    });
     if (!outboxPreCheck) {
-      this.logger.warn(`dispatchOne: outbox row ${outboxId} not found — skipping`);
+      this.logger.warn(
+        `dispatchOne: outbox row ${outboxId} not found — skipping`,
+      );
       return;
     }
     if (outboxPreCheck.status !== OutboxStatus.PENDING) {
@@ -98,7 +109,10 @@ export class OutboxDispatcherService {
       return;
     }
 
-    const key = balanceKey(requestPreCheck.employeeId, requestPreCheck.locationId);
+    const key = balanceKey(
+      requestPreCheck.employeeId,
+      requestPreCheck.locationId,
+    );
 
     await this.lockService.runExclusive(key, async () => {
       // --- Transaction 1: re-read under lock, increment attempts ---
@@ -107,7 +121,9 @@ export class OutboxDispatcherService {
       let shouldProceed = true;
 
       await this.dataSource.transaction(async (manager: EntityManager) => {
-        const txOutbox = await manager.getRepository(Outbox).findOne({ where: { id: outboxId } });
+        const txOutbox = await manager
+          .getRepository(Outbox)
+          .findOne({ where: { id: outboxId } });
         if (!txOutbox || txOutbox.status !== OutboxStatus.PENDING) {
           // Another actor already handled this row (racy VOID, concurrent dispatcher tick, etc.)
           shouldProceed = false;
@@ -141,9 +157,9 @@ export class OutboxDispatcherService {
       }
 
       // Re-assign from captured values (TypeScript flow narrowing)
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+
       outbox = outbox!;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+
       request = request!;
 
       // --- HCM call — OUTSIDE any transaction (no network I/O in a txn) ---

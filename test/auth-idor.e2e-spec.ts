@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
-import { bootstrapTestApp, TestAppHandles } from './e2e-helpers/bootstrap-test-app';
+import {
+  bootstrapTestApp,
+  TestAppHandles,
+} from './e2e-helpers/bootstrap-test-app';
 import { asEmployee, asManager } from './e2e-helpers/http-headers';
 
 describe('auth + IDOR (FakeHcmClient)', () => {
@@ -43,7 +46,7 @@ describe('auth + IDOR (FakeHcmClient)', () => {
     expect(res.body.message).toBeTruthy();
   });
 
-  it('Employee A querying B\'s balance → 403', async () => {
+  it("Employee A querying B's balance → 403", async () => {
     await request(handles.app.getHttpServer())
       .get('/balances')
       .query({ employeeId: 'emp2', locationId: 'loc1' })
@@ -51,7 +54,7 @@ describe('auth + IDOR (FakeHcmClient)', () => {
       .expect(403);
   });
 
-  it('Manager querying any employee\'s balance → 200', async () => {
+  it("Manager querying any employee's balance → 200", async () => {
     await request(handles.app.getHttpServer())
       .get('/balances')
       .query({ employeeId: 'emp1', locationId: 'loc1' })
@@ -63,7 +66,12 @@ describe('auth + IDOR (FakeHcmClient)', () => {
     const res = await request(handles.app.getHttpServer())
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+      })
       .expect(400);
     expect(JSON.stringify(res.body)).toMatch(/Idempotency-Key/i);
   });
@@ -73,7 +81,12 @@ describe('auth + IDOR (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', randomUUID())
-      .send({ employeeId: 'emp2', locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' })
+      .send({
+        employeeId: 'emp2',
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+      })
       .expect(403);
   });
 
@@ -83,7 +96,12 @@ describe('auth + IDOR (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', randomUUID())
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+      })
       .expect(201);
 
     await request(handles.app.getHttpServer())
@@ -98,7 +116,12 @@ describe('auth + IDOR (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', randomUUID())
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+      })
       .expect(201);
 
     await request(handles.app.getHttpServer())
@@ -133,7 +156,12 @@ describe('auth + IDOR (FakeHcmClient)', () => {
       .post('/time-off-requests')
       .set(asEmployee('emp1'))
       .set('Idempotency-Key', idem)
-      .send({ employeeId: 'emp1', locationId: 'loc1', startDate: '2026-07-07', endDate: '2026-07-08' })
+      .send({
+        employeeId: 'emp1',
+        locationId: 'loc1',
+        startDate: '2026-07-07',
+        endDate: '2026-07-08',
+      })
       .expect(201);
 
     const cancelRes = await request(app.getHttpServer())

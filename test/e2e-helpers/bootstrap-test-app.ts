@@ -45,7 +45,9 @@ export interface TestAppHandles {
 
 const DEFAULT_CLOCK_DATE = new Date('2026-05-27T00:00:00Z');
 
-export async function bootstrapTestApp(opts: BootstrapOptions = {}): Promise<TestAppHandles> {
+export async function bootstrapTestApp(
+  opts: BootstrapOptions = {},
+): Promise<TestAppHandles> {
   const fakeClock = new FakeClock(DEFAULT_CLOCK_DATE);
   const fakeHcm = opts.hcmBaseUrl ? null : new FakeHcmClient();
 
@@ -103,7 +105,11 @@ export async function bootstrapTestApp(opts: BootstrapOptions = {}): Promise<Tes
 
   // Must match src/main.ts exactly — R4
   app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: false }),
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: false,
+    }),
   );
 
   if (opts.listen) {

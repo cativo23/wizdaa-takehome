@@ -144,7 +144,7 @@ async function buildModule(hcmBaseUrl: string) {
       ClockModule,
       LockModule,
       BalanceModule,
-      HcmModule,           // <-- REAL HcmClientService, no override
+      HcmModule, // <-- REAL HcmClientService, no override
       TimeOffRequestModule,
       ReconciliationModule,
       ReservationReaperModule,
