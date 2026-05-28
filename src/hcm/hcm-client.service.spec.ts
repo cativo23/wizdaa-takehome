@@ -175,6 +175,23 @@ describe('HcmClientService.fileTimeOff', () => {
     // 5xx is retryable → should attempt maxAttempts times
     expect(http.post).toHaveBeenCalledTimes(maxAttempts);
   });
+
+  it('returns {ok:false} when HCM returns 200 with body.ok=false (silent-insufficient)', async () => {
+    const http = makeHttpService();
+    http.post.mockReturnValue(
+      of({ status: 200, data: { ok: false, errorHint: 'insufficient' } } as any),
+    );
+    const svc = buildService(http);
+    const backoffSpy = jest.spyOn(svc as any, 'backoffDelay');
+
+    const result = await svc.fileTimeOff(cmd);
+
+    expect(result.ok).toBe(false);
+    expect(result.errorHint).toBe('insufficient');
+    // Business rejection — no retries fired
+    expect(backoffSpy).not.toHaveBeenCalled();
+    expect(http.post).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -213,6 +213,11 @@ export class TimeOffRequestService {
     endDate: string,
     idempotencyKey: string,
   ): Promise<TimeOffRequest> {
+    // Pre-warm: if the balance row is cold (lastHcmAsOf === null), getBalance triggers the
+    // ADR-014 lazy-hydrate which calls lockService.runExclusive on the same key internally.
+    // Calling it BEFORE we acquire our own lock prevents re-entrant deadlock (ADR-010 + ADR-014).
+    await this.balanceService.getBalance(employeeId, locationId);
+
     const key = balanceKey(employeeId, locationId);
     return this.lockService.runExclusive(key, async () => {
       // ① Idempotency check (ADR-012 §1)
@@ -333,6 +338,10 @@ export class TimeOffRequestService {
       throw new NotFoundException(`TimeOffRequest ${requestId} not found`);
     }
 
+    // Pre-warm: ensures getBalance's cold-path lock (ADR-014) fires before we hold
+    // our own lock on the same key — avoids re-entrant deadlock (ADR-010 + ADR-014).
+    await this.balanceService.getBalance(preload.employeeId, preload.locationId);
+
     const key = balanceKey(preload.employeeId, preload.locationId);
     return this.lockService.runExclusive(key, async () => {
       // Reload inside the lock for a consistent view.
@@ -444,6 +453,10 @@ export class TimeOffRequestService {
       throw new NotFoundException(`TimeOffRequest ${requestId} not found`);
     }
 
+    // Pre-warm: ensures getBalance's cold-path lock (ADR-014) fires before we hold
+    // our own lock on the same key — avoids re-entrant deadlock (ADR-010 + ADR-014).
+    await this.balanceService.getBalance(preload.employeeId, preload.locationId);
+
     const key = balanceKey(preload.employeeId, preload.locationId);
     return this.lockService.runExclusive(key, async () => {
       const req = await this.requestRepo.findOne({ where: { id: requestId } });
@@ -508,6 +521,10 @@ export class TimeOffRequestService {
     if (!preload) {
       throw new NotFoundException(`TimeOffRequest ${requestId} not found`);
     }
+
+    // Pre-warm: ensures getBalance's cold-path lock (ADR-014) fires before we hold
+    // our own lock on the same key — avoids re-entrant deadlock (ADR-010 + ADR-014).
+    await this.balanceService.getBalance(preload.employeeId, preload.locationId);
 
     const key = balanceKey(preload.employeeId, preload.locationId);
     return this.lockService.runExclusive(key, async () => {

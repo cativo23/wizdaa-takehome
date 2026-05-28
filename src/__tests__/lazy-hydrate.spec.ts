@@ -7,6 +7,7 @@
  *   c. HCM unavailable → ephemeral degraded DTO; nothing persisted; self-heals.
  *   d. Stampede (double-checked locking): only one HCM call despite concurrent cold readers.
  *   e. Flag disabled → legacy zero-on-miss behavior; no HCM call.
+ *   f. (regression S16) submit on cold cache does not deadlock.
  */
 
 import { TestingModule } from '@nestjs/testing';
@@ -21,6 +22,8 @@ import { Balance } from '../entities/balance.entity';
 import { BalanceService } from '../balance/balance.service';
 import { BalanceLockService, balanceKey } from '../common/lock/balance-lock.service';
 import { AppConfigService } from '../config/app-config.service';
+import { TimeOffRequestService } from '../time-off-request/time-off-request.service';
+import { RequestStatus } from '../entities/enums';
 
 // ---------------------------------------------------------------------------
 // Helper: load a balance row from the repo (null = not persisted)
@@ -266,6 +269,59 @@ describe('ADR-014 — cold-read lazy hydration', () => {
       const persisted = await getRow(balanceRepo, 'emp1', 'loc1');
       expect(persisted).not.toBeNull();
       expect(persisted!.available).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // (f) Regression S16 — submit on cold cache does NOT deadlock.
+  // ---------------------------------------------------------------------------
+  describe('(f) regression S16 — submit on cold cache does not deadlock', () => {
+    const { builder, hcm } = createTestModule();
+    let moduleRef: TestingModule;
+    let timeOffSvc: TimeOffRequestService;
+    let balanceRepo: Repository<Balance>;
+
+    beforeEach(async () => {
+      moduleRef = await builder.compile();
+      await moduleRef.init();
+      timeOffSvc = moduleRef.get(TimeOffRequestService);
+      balanceRepo = moduleRef.get(getRepositoryToken(Balance));
+      hcm.reset();
+    });
+
+    afterEach(() => moduleRef.close());
+
+    it('submit on cold cache does NOT deadlock (regression for e2e S16)', async () => {
+      // Seed HCM so lazy-hydrate succeeds. Do NOT pre-seed the local Balance row
+      // — the tuple is cold (lastHcmAsOf === null / absent).
+      hcm.seedBalance('cold_submit_emp', 'loc1', 15);
+
+      const submit = timeOffSvc.submit(
+        'cold_submit_emp',
+        'loc1',
+        '2026-06-01',
+        '2026-06-02',
+        'cold-key-1',
+      );
+
+      // Race: if the deadlock returns the promise will never settle — fail fast.
+      const result = await Promise.race([
+        submit,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('submit deadlocked')), 5000),
+        ),
+      ]);
+
+      // Request created successfully
+      expect(result.status).toBe(RequestStatus.PENDING);
+
+      // Balance row was hydrated by the lazy-load path
+      const row = await getRow(balanceRepo, 'cold_submit_emp', 'loc1');
+      expect(row).not.toBeNull();
+      expect(row!.lastHcmAsOf).not.toBeNull();
+      expect(row!.available).toBe(15);
+      // 2 business days reserved (Mon 2026-06-01 + Tue 2026-06-02)
+      expect(row!.reserved).toBe(2);
     });
   });
 });

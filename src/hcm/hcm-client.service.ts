@@ -204,9 +204,24 @@ export class HcmClientService implements HcmClient {
           `[HCM] ${operation} ok attempt=${attempt + 1} idempotencyKey=${idempotencyKey}`,
         );
 
-        // HCM returned a success response — trust the shape, not the business
-        // meaning. ackedAt comes from the HCM body.
         const data = response.data;
+
+        // Propagate body.ok: a 2xx with ok=false is a business-level rejection (e.g.
+        // insufficient balance reported after filing). Never retry these — the HCM
+        // already processed the request and rejected it for a domain reason.
+        if (data.ok === false) {
+          this.logger.debug(
+            `[HCM] ${operation} business-rejected (2xx ok=false) idempotencyKey=${idempotencyKey} hint=${data.errorHint ?? 'hcm-rejected'}`,
+          );
+          return { ok: false, errorHint: data.errorHint ?? 'hcm-rejected' } as T;
+        }
+
+        if (data.ok === undefined) {
+          this.logger.warn(
+            `[HCM] ${operation} response missing ok field — treating as success; possible contract drift idempotencyKey=${idempotencyKey}`,
+          );
+        }
+
         return {
           ok: true,
           ackedAt: data.ackedAt ?? new Date().toISOString(),
