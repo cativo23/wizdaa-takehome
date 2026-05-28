@@ -68,3 +68,17 @@ function seedBalances(): void {
 }
 
 seedBalances();
+
+/**
+ * Reset all module-level store state back to defaults.
+ * Intended for test use only — call in beforeEach when the real MockHcmModule
+ * is booted in-process, since the Maps are module-level singletons that persist
+ * across tests within the same Jest worker.
+ */
+export function resetMockHcmStore(): void {
+  balanceStore.clear();
+  idempotencyStore.clear();
+  activeScenario = 'correct';
+  currentSequence = 0;
+  seedBalances();
+}
