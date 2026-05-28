@@ -2,7 +2,7 @@
  * createTestModule — factory for a NestJS testing module that is:
  *
  *   1. Wired with an in-memory SQLite database (fresh per test run).
- *   2. CLOCK overridden with a FakeClock (default: 2026-05-27T00:00:00Z).
+ *   2. CLOCK overridden with a FakeClock (default: 2025-12-15T00:00:00Z).
  *   3. HCM_CLIENT overridden with a FakeHcmClient.
  *   4. ScheduleModule NOT imported — @Cron/@Interval hooks stay dormant.
  *      Drive the dispatcher and reaper manually via runDispatcherOnce /
@@ -59,7 +59,7 @@ export interface TestModuleHandles {
   hcm: FakeHcmClient;
 }
 
-const DEFAULT_CLOCK_DATE = new Date('2026-05-27T00:00:00Z');
+const DEFAULT_CLOCK_DATE = new Date('2025-12-15T00:00:00Z');
 
 /**
  * Build a TestingModuleBuilder pre-configured for integration tests.

@@ -272,6 +272,19 @@ export class TimeOffRequestService {
       // ③ Compute days server-side (§12, A6 seam)
       const days = this.countBusinessDays(startDate, endDate);
 
+      if (days === 0) {
+        throw new BadRequestException(
+          'The requested date range contains no business days',
+        );
+      }
+
+      // Past-date guard: reject if the entire range is already in the past.
+      // Using endDate (not startDate) so a range that straddles today is still allowed.
+      const nowCivilDate = this.clock.now().toISOString().slice(0, 10);
+      if (endDate < nowCivilDate) {
+        throw new BadRequestException('endDate is in the past');
+      }
+
       // ③ Availability check (ADR-001 local guard, E1)
       await this.balanceService.validateAvailability(
         employeeId,
