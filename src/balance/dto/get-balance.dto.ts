@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty } from 'class-validator';
+import { IsString, IsNotEmpty, MaxLength } from 'class-validator';
 
 /**
  * Query params for GET /balances — FR-1.
@@ -10,9 +10,11 @@ import { IsString, IsNotEmpty } from 'class-validator';
 export class GetBalanceDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(128)
   employeeId!: string;
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(128)
   locationId!: string;
 }

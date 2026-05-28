@@ -6,6 +6,7 @@ import {
   Headers,
   BadRequestException,
   ForbiddenException,
+  NotFoundException,
   ParseUUIDPipe,
 } from '@nestjs/common';
 import { TimeOffRequestService } from './time-off-request.service';
@@ -53,8 +54,8 @@ export class TimeOffRequestController {
     }
     // Idempotency-Key is required for submit (ADR-012). Any non-empty string is
     // accepted in v1; UUID-format enforcement can be added later.
-    if (!idempotencyKey) {
-      throw new BadRequestException('Idempotency-Key header is required.');
+    if (!idempotencyKey || idempotencyKey.length > 200) {
+      throw new BadRequestException('Idempotency-Key header is required and must be ≤ 200 chars.');
     }
     if (body.employeeId !== principalId) {
       throw new ForbiddenException(
@@ -138,8 +139,16 @@ export class TimeOffRequestController {
         'X-Role header must be "employee" or "manager".',
       );
     }
-    // Cancel: principal may be the employee themselves OR a manager (§11).
-    // IDOR enforcement is deferred to the service, which checks ownership.
+    // IDOR (§12): employees may only cancel their own requests; managers may cancel any.
+    if (role !== 'manager') {
+      const existing = await this.service.findById(requestId);
+      if (!existing) {
+        throw new NotFoundException(`TimeOffRequest ${requestId} not found`);
+      }
+      if (existing.employeeId !== principalId) {
+        throw new ForbiddenException('Employees may only cancel their own requests.');
+      }
+    }
     return this.service.cancel(requestId, principalId);
   }
 }

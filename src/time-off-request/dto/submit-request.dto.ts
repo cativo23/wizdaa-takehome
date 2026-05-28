@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsDateString, Validate, ValidatorConstraint, ValidatorConstraintInterface, ValidationArguments } from 'class-validator';
+import { IsString, IsNotEmpty, IsDateString, MaxLength, Validate, ValidatorConstraint, ValidatorConstraintInterface, ValidationArguments } from 'class-validator';
 
 /**
  * Custom validator: endDate must be >= startDate.
@@ -30,10 +30,12 @@ export class EndDateAfterStartDateConstraint
 export class SubmitRequestDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(128)
   employeeId!: string;
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(128)
   locationId!: string;
 
   /** Inclusive start date (YYYY-MM-DD). */

@@ -5,6 +5,8 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  app.getHttpAdapter().getInstance().disable('x-powered-by');
+
   // Global validation: strip unknown properties, auto-transform types.
   // `days` is never accepted from clients — server always recomputes it (§12).
   app.useGlobalPipes(

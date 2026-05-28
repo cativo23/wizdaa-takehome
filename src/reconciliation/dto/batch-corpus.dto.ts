@@ -4,9 +4,11 @@ import {
   IsPositive,
   IsISO8601,
   IsArray,
+  ArrayMaxSize,
   ValidateNested,
   IsString,
   IsNotEmpty,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -16,10 +18,12 @@ import { Type } from 'class-transformer';
 export class HcmBalanceDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(128)
   employeeId!: string;
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(128)
   locationId!: string;
 
   @IsNumber()
@@ -46,6 +50,7 @@ export class BatchCorpusDto {
   asOf!: string;
 
   @IsArray()
+  @ArrayMaxSize(10000)
   @ValidateNested({ each: true })
   @Type(() => HcmBalanceDto)
   balances!: HcmBalanceDto[];

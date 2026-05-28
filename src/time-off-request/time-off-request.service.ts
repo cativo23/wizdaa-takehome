@@ -498,8 +498,14 @@ export class TimeOffRequestService {
     });
   }
 
+  /** Fetch a request by ID without locking. Used by the controller for IDOR pre-checks. */
+  async findById(requestId: string): Promise<TimeOffRequest | null> {
+    return this.requestRepo.findOne({ where: { id: requestId } });
+  }
+
   /**
    * Cancel a PENDING, PENDING_SYNC, or APPROVED request. FR-6. ADR-004/ADR-008/ADR-011.
+   * IDOR ownership check (employees may only cancel their own) is enforced by the controller.
    *
    * Branches (all under balance-key lock):
    *   PENDING:
@@ -514,9 +520,9 @@ export class TimeOffRequestService {
    *     - Restore available (available += days) + enqueue REVERSE → CANCELLED.
    *
    * @param requestId
-   * @param principalId - Authenticated user. Employee may only cancel their own request (§12).
+   * @param _principalId - Caller identity; ownership is enforced by the controller before this is called.
    */
-  async cancel(requestId: string, principalId: string): Promise<TimeOffRequest> {
+  async cancel(requestId: string, _principalId: string): Promise<TimeOffRequest> {
     const preload = await this.requestRepo.findOne({ where: { id: requestId } });
     if (!preload) {
       throw new NotFoundException(`TimeOffRequest ${requestId} not found`);
@@ -587,7 +593,6 @@ export class TimeOffRequestService {
         }
 
         req.status = RequestStatus.CANCELLED;
-        void principalId; // principalId used for auth check in controller; not stored in v1
         await manager.save(TimeOffRequest, req);
       });
 

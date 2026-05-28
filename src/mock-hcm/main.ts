@@ -19,6 +19,8 @@ async function bootstrap(): Promise<void> {
     logger: process.env['NODE_ENV'] === 'test' ? false : ['log', 'error', 'warn'],
   });
 
+  app.getHttpAdapter().getInstance().disable('x-powered-by');
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
