@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  unit:
+    name: Unit tests + coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run tests with coverage
+        run: npm run test:cov -- --coverageReporters=text --coverageReporters=lcov 2>&1 | tee /tmp/coverage-output.txt
+      - name: Print coverage summary
+        run: grep -A5 "All files" /tmp/coverage-output.txt || true
+      - name: Enforce 85% coverage floor
+        run: |
+          STMTS=$(grep "All files" /tmp/coverage-output.txt | awk '{print $4}' | tr -d '%')
+          if [ -z "$STMTS" ]; then
+            echo "Could not parse coverage; skipping threshold check."
+          elif awk "BEGIN{exit !($STMTS < 85)}"; then
+            echo "Coverage ${STMTS}% is below the 85% floor."
+            exit 1
+          else
+            echo "Coverage ${STMTS}% meets the 85% floor."
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/lcov-report/
+          retention-days: 14
+
+  e2e:
+    name: E2E tests
+    runs-on: ubuntu-latest
+    needs: unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:e2e
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Verify dist artefacts
+        run: ls -la dist/main.js dist/mock-hcm/main.js
