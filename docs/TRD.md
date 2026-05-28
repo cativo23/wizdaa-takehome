@@ -210,7 +210,7 @@ price of a second validation path and one HCM read per approve.
 **Status:** Accepted
 **Context:** Concurrent pendings could over-commit a balance, and an un-actioned PENDING would otherwise hold
 `reserved` days forever and re-flag every reconcile.
-**Decision:** Submit moves days `available→reserved`; approve commits, reject/expire releases. Each reservation
+**Decision:** Submit increments `reserved` by `days` (`available` is not touched at submit); approve commits the reservation (`available -= days, reserved -= days`); reject and expire release the hold (`reserved -= days`); cancel of a committed (APPROVED/PENDING_SYNC) request restores (`available += days`). Each reservation
 carries `expiresAt` (configurable TTL, default 14 days). A scheduled reaper sweeps expired PENDING/PENDING_SYNC
 to EXPIRED and releases `reserved`. The reaper runs under the balance-key lock and, in the **same transaction**,
 voids any still-PENDING outbox FILE row for that request — otherwise the dispatcher could file to HCM after the
@@ -400,6 +400,13 @@ cleaner but a larger refactor; deferred.
 only on paper. Cost: six method signatures grow an optional parameter; every caller threads
 the `EntityManager`. No new runtime dependency.
 
+*Exception — `applyHcmSnapshot` in the approve path is intentionally NOT threaded through
+the commit+outbox transaction.* The snapshot is an HCM observation, not a state mutation we
+own; rolling it back would discard a true reading. A crash between the snapshot write and
+the commit is self-healing — no outbox row exists yet, the request stays PENDING, and the
+next approve attempt re-reads HCM. This trades a tiny "snapshot recorded but commit not
+landed" window for never forgetting a real HCM observation.
+
 ---
 
 ## 8. HCM Interface Contract (mocked)
@@ -564,9 +571,9 @@ responsibilities at its own boundary:
 
 ## 15. Deliverables Checklist
 
-- [ ] This TRD
-- [ ] NestJS + SQLite service implementing §5–§8 (built via agentic development)
-- [ ] Standalone configurable mock HCM (ADR-007)
-- [ ] Test suite covering the §9.2 matrix (E1–E28) with the §9.1 harness
-- [ ] Coverage report (proof, ≥ 90% on services)
-- [ ] README: setup + run, architecture summary, decisions rationale
+- [x] This TRD
+- [x] NestJS + SQLite service implementing §5–§8 (built via agentic development)
+- [x] Standalone configurable mock HCM (ADR-007)
+- [x] Test suite covering the §9.2 matrix (E1–E28) with the §9.1 harness
+- [x] Coverage report (proof, ≥ 90% on services) — per-service 92.69–100% statements; aggregate 73% (intentionally low: mock-hcm + thin controllers + DTOs)
+- [x] README: setup + run, architecture summary, decisions rationale
