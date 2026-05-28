@@ -10,11 +10,7 @@
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 
-import {
-  createTestModule,
-  seedBalance,
-  runDispatcherOnce,
-} from '../testing';
+import { createTestModule, seedBalance, runDispatcherOnce } from '../testing';
 
 import { Balance } from '../entities/balance.entity';
 import { TimeOffRequest } from '../entities/time-off-request.entity';
@@ -38,7 +34,9 @@ const FUTURE_END = '2026-06-02'; // Mon-Tue → 2 business days
 // E3 — HCM silent failure (200 on insufficient)
 // ---------------------------------------------------------------------------
 describe('E3 — HCM silent failure (200 on insufficient)', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
 
@@ -75,7 +73,9 @@ describe('E3 — HCM silent failure (200 on insufficient)', () => {
     const reqRepo = moduleRef.get<Repository<TimeOffRequest>>(
       getRepositoryToken(TimeOffRequest),
     );
-    const outboxRepo = moduleRef.get<Repository<Outbox>>(getRepositoryToken(Outbox));
+    const outboxRepo = moduleRef.get<Repository<Outbox>>(
+      getRepositoryToken(Outbox),
+    );
     const requests = await reqRepo.find();
     const outboxRows = await outboxRepo.find();
     expect(requests).toHaveLength(0);
@@ -87,7 +87,9 @@ describe('E3 — HCM silent failure (200 on insufficient)', () => {
 // E4 — HCM timeout at approve → PENDING_SYNC, reservation held, retried
 // ---------------------------------------------------------------------------
 describe('E4 — HCM timeout at approve → PENDING_SYNC, reservation held, retried', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let dispatcher: OutboxDispatcherService;
   let balanceRepo: Repository<Balance>;
@@ -116,7 +118,13 @@ describe('E4 — HCM timeout at approve → PENDING_SYNC, reservation held, retr
 
   it('approve yields PENDING_SYNC when HCM is unreachable; retry advances attempts; second retry succeeds', async () => {
     // Submit 2 days
-    const submitted = await svc.submit('emp1', 'loc1', FUTURE_START, FUTURE_END, 'idem-e4');
+    const submitted = await svc.submit(
+      'emp1',
+      'loc1',
+      FUTURE_START,
+      FUTURE_END,
+      'idem-e4',
+    );
     expect(submitted.status).toBe(RequestStatus.PENDING);
 
     // Set timeout BEFORE approve — getBalance will throw HcmUnavailableError
@@ -144,11 +152,15 @@ describe('E4 — HCM timeout at approve → PENDING_SYNC, reservation held, retr
     // --- First dispatch: still timeout → attempts becomes 1, still PENDING ---
     await runDispatcherOnce(dispatcher);
 
-    const rowAfter1 = await outboxRepo.findOneOrFail({ where: { id: outboxRow.id } });
+    const rowAfter1 = await outboxRepo.findOneOrFail({
+      where: { id: outboxRow.id },
+    });
     expect(rowAfter1.attempts).toBe(1);
     expect(rowAfter1.status).toBe(OutboxStatus.PENDING);
 
-    const reqAfter1 = await reqRepo.findOneOrFail({ where: { id: submitted.id } });
+    const reqAfter1 = await reqRepo.findOneOrFail({
+      where: { id: submitted.id },
+    });
     expect(reqAfter1.status).toBe(RequestStatus.PENDING_SYNC);
 
     expect(hcm.callsTo.fileTimeOff).toBeGreaterThanOrEqual(1);
@@ -158,10 +170,14 @@ describe('E4 — HCM timeout at approve → PENDING_SYNC, reservation held, retr
     const callsBefore = hcm.callsTo.fileTimeOff;
     await runDispatcherOnce(dispatcher);
 
-    const rowAfter2 = await outboxRepo.findOneOrFail({ where: { id: outboxRow.id } });
+    const rowAfter2 = await outboxRepo.findOneOrFail({
+      where: { id: outboxRow.id },
+    });
     expect(rowAfter2.status).toBe(OutboxStatus.SENT);
 
-    const reqAfter2 = await reqRepo.findOneOrFail({ where: { id: submitted.id } });
+    const reqAfter2 = await reqRepo.findOneOrFail({
+      where: { id: submitted.id },
+    });
     expect(reqAfter2.status).toBe(RequestStatus.APPROVED);
     expect(reqAfter2.hcmAckAt).not.toBeNull();
 
@@ -174,7 +190,9 @@ describe('E4 — HCM timeout at approve → PENDING_SYNC, reservation held, retr
 // E5 — PENDING_SYNC retry hits cap → REVERSE enqueued, REJECTED, balance restored
 // ---------------------------------------------------------------------------
 describe('E5 — PENDING_SYNC retry hits cap → REVERSE enqueued, REJECTED, balance restored', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let dispatcher: OutboxDispatcherService;
   let balanceRepo: Repository<Balance>;
@@ -202,7 +220,13 @@ describe('E5 — PENDING_SYNC retry hits cap → REVERSE enqueued, REJECTED, bal
   });
 
   it('exhausting 5 retries flips request to REJECTED, restores balance, enqueues REVERSE', async () => {
-    const submitted = await svc.submit('emp1', 'loc1', FUTURE_START, FUTURE_END, 'idem-e5');
+    const submitted = await svc.submit(
+      'emp1',
+      'loc1',
+      FUTURE_START,
+      FUTURE_END,
+      'idem-e5',
+    );
 
     // Approve succeeds locally (default 'correct' scenario allows getBalance)
     const approved = await svc.approve(submitted.id, 'manager1');
@@ -234,7 +258,9 @@ describe('E5 — PENDING_SYNC retry hits cap → REVERSE enqueued, REJECTED, bal
     expect(fileRow.attempts).toBe(5);
 
     // Request → REJECTED
-    const reqAfter = await reqRepo.findOneOrFail({ where: { id: submitted.id } });
+    const reqAfter = await reqRepo.findOneOrFail({
+      where: { id: submitted.id },
+    });
     expect(reqAfter.status).toBe(RequestStatus.REJECTED);
 
     // Balance restored: available=10, reserved=0
@@ -257,7 +283,9 @@ describe('E5 — PENDING_SYNC retry hits cap → REVERSE enqueued, REJECTED, bal
     hcm.setScenario('correct');
     await runDispatcherOnce(dispatcher);
 
-    const reverseSent = await outboxRepo.findOneOrFail({ where: { id: reverseRow.id } });
+    const reverseSent = await outboxRepo.findOneOrFail({
+      where: { id: reverseRow.id },
+    });
     expect(reverseSent.status).toBe(OutboxStatus.SENT);
   });
 });
@@ -266,10 +294,11 @@ describe('E5 — PENDING_SYNC retry hits cap → REVERSE enqueued, REJECTED, bal
 // E10 — Approve after HCM refresh dropped balance → reject + release
 // ---------------------------------------------------------------------------
 describe('E10 — Approve after HCM refresh dropped balance → reject + release', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
-  let reqRepo: Repository<TimeOffRequest>;
   let outboxRepo: Repository<Outbox>;
 
   const { builder, hcm } = createTestModule();
@@ -279,7 +308,6 @@ describe('E10 — Approve after HCM refresh dropped balance → reject + release
     await moduleRef.init();
     svc = moduleRef.get(TimeOffRequestService);
     balanceRepo = moduleRef.get(getRepositoryToken(Balance));
-    reqRepo = moduleRef.get(getRepositoryToken(TimeOffRequest));
     outboxRepo = moduleRef.get(getRepositoryToken(Outbox));
 
     await seedBalance(balanceRepo, { available: 5, reserved: 0 });
@@ -294,7 +322,13 @@ describe('E10 — Approve after HCM refresh dropped balance → reject + release
 
   it('approve rejects when HCM refresh reveals insufficient balance; reservation released', async () => {
     // Submit 2 days (local balance=5, sufficient)
-    const submitted = await svc.submit('emp1', 'loc1', FUTURE_START, FUTURE_END, 'idem-e10');
+    const submitted = await svc.submit(
+      'emp1',
+      'loc1',
+      FUTURE_START,
+      FUTURE_END,
+      'idem-e10',
+    );
     expect(submitted.status).toBe(RequestStatus.PENDING);
 
     // Simulate HCM balance drop before approve: now only 1 day at HCM
@@ -329,12 +363,13 @@ describe('E10 — Approve after HCM refresh dropped balance → reject + release
 // E11 — HCM file times out, then retries → filed exactly once
 // ---------------------------------------------------------------------------
 describe('E11 — HCM file times out, then retries → filed exactly once (idempotency key)', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let dispatcher: OutboxDispatcherService;
   let balanceRepo: Repository<Balance>;
   let reqRepo: Repository<TimeOffRequest>;
-  let outboxRepo: Repository<Outbox>;
 
   const { builder, hcm } = createTestModule();
 
@@ -345,7 +380,6 @@ describe('E11 — HCM file times out, then retries → filed exactly once (idemp
     dispatcher = moduleRef.get(OutboxDispatcherService);
     balanceRepo = moduleRef.get(getRepositoryToken(Balance));
     reqRepo = moduleRef.get(getRepositoryToken(TimeOffRequest));
-    outboxRepo = moduleRef.get(getRepositoryToken(Outbox));
 
     await seedBalance(balanceRepo, { available: 10, reserved: 0 });
     hcm.seedBalance('emp1', 'loc1', 10);
@@ -357,7 +391,13 @@ describe('E11 — HCM file times out, then retries → filed exactly once (idemp
   });
 
   it('filed exactly once despite one failed attempt (idempotency key prevents double-deduct)', async () => {
-    const submitted = await svc.submit('emp1', 'loc1', FUTURE_START, FUTURE_END, 'idem-e11');
+    const submitted = await svc.submit(
+      'emp1',
+      'loc1',
+      FUTURE_START,
+      FUTURE_END,
+      'idem-e11',
+    );
     const approved = await svc.approve(submitted.id, 'manager1');
     expect(approved.status).toBe(RequestStatus.PENDING_SYNC);
 
@@ -368,7 +408,9 @@ describe('E11 — HCM file times out, then retries → filed exactly once (idemp
     // callsTo.fileTimeOff = 1 so far (one failed attempt)
     expect(hcm.callsTo.fileTimeOff).toBe(1);
 
-    const reqAfterFail = await reqRepo.findOneOrFail({ where: { id: submitted.id } });
+    const reqAfterFail = await reqRepo.findOneOrFail({
+      where: { id: submitted.id },
+    });
     expect(reqAfterFail.status).toBe(RequestStatus.PENDING_SYNC);
 
     // Second dispatch succeeds
@@ -378,7 +420,9 @@ describe('E11 — HCM file times out, then retries → filed exactly once (idemp
     // callsTo.fileTimeOff = 2 total (1 failed + 1 succeeded)
     expect(hcm.callsTo.fileTimeOff).toBe(2);
 
-    const reqAfterSuccess = await reqRepo.findOneOrFail({ where: { id: submitted.id } });
+    const reqAfterSuccess = await reqRepo.findOneOrFail({
+      where: { id: submitted.id },
+    });
     expect(reqAfterSuccess.status).toBe(RequestStatus.APPROVED);
     expect(reqAfterSuccess.hcmAckAt).not.toBeNull();
 
@@ -405,7 +449,9 @@ describe('E11 — HCM file times out, then retries → filed exactly once (idemp
 // ---------------------------------------------------------------------------
 describe('E17 — Crash after local commit, before HCM file — outbox redrives on restart', () => {
   describe('E17a — Normal redrive: outbox row survives; dispatcher promotes to APPROVED', () => {
-    let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+    let moduleRef: Awaited<
+      ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+    >;
     let svc: TimeOffRequestService;
     let dispatcher: OutboxDispatcherService;
     let balanceRepo: Repository<Balance>;
@@ -434,7 +480,13 @@ describe('E17 — Crash after local commit, before HCM file — outbox redrives 
     });
 
     it('outbox FILE row is durable; dispatcher sends it after a simulated restart gap', async () => {
-      const submitted = await svc.submit('emp1', 'loc1', FUTURE_START, FUTURE_END, 'idem-e17a');
+      const submitted = await svc.submit(
+        'emp1',
+        'loc1',
+        FUTURE_START,
+        FUTURE_END,
+        'idem-e17a',
+      );
       const approved = await svc.approve(submitted.id, 'manager1');
 
       // At this point: PENDING_SYNC, outbox FILE PENDING, balance committed locally
@@ -449,17 +501,23 @@ describe('E17 — Crash after local commit, before HCM file — outbox redrives 
       // dispatcher waking up and picking up the durable PENDING row.
       await runDispatcherOnce(dispatcher);
 
-      const outboxAfter = await outboxRepo.findOneOrFail({ where: { id: outboxRows[0].id } });
+      const outboxAfter = await outboxRepo.findOneOrFail({
+        where: { id: outboxRows[0].id },
+      });
       expect(outboxAfter.status).toBe(OutboxStatus.SENT);
 
-      const reqAfter = await reqRepo.findOneOrFail({ where: { id: submitted.id } });
+      const reqAfter = await reqRepo.findOneOrFail({
+        where: { id: submitted.id },
+      });
       expect(reqAfter.status).toBe(RequestStatus.APPROVED);
       expect(reqAfter.hcmAckAt).not.toBeNull();
     });
   });
 
   describe('E17b — Atomicity rollback: inject failure inside transaction → no partial commit', () => {
-    let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+    let moduleRef: Awaited<
+      ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+    >;
     let svc: TimeOffRequestService;
     let balanceRepo: Repository<Balance>;
     let reqRepo: Repository<TimeOffRequest>;
@@ -489,7 +547,13 @@ describe('E17 — Crash after local commit, before HCM file — outbox redrives 
     });
 
     it('balance, request, and outbox row all roll back together when the transaction throws', async () => {
-      const submitted = await svc.submit('emp1', 'loc1', FUTURE_START, FUTURE_END, 'idem-e17b');
+      const submitted = await svc.submit(
+        'emp1',
+        'loc1',
+        FUTURE_START,
+        FUTURE_END,
+        'idem-e17b',
+      );
 
       // After submit: available=10, reserved=2
       const balAfterSubmit = await balanceRepo.findOneOrFail({
@@ -541,7 +605,9 @@ describe('E17 — Crash after local commit, before HCM file — outbox redrives 
       expect(balAfterCrash.reserved).toBe(2);
 
       // Request must still be PENDING (not PENDING_SYNC)
-      const reqAfterCrash = await reqRepo.findOneOrFail({ where: { id: submitted.id } });
+      const reqAfterCrash = await reqRepo.findOneOrFail({
+        where: { id: submitted.id },
+      });
       expect(reqAfterCrash.status).toBe(RequestStatus.PENDING);
 
       // No outbox rows written
@@ -555,10 +621,11 @@ describe('E17 — Crash after local commit, before HCM file — outbox redrives 
 // E18 — startDate retroactive at approve (location tz / DST)
 // ---------------------------------------------------------------------------
 describe('E18 — startDate retroactive at approve (location tz / DST)', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
-  let reqRepo: Repository<TimeOffRequest>;
   let outboxRepo: Repository<Outbox>;
 
   const { builder, clock, hcm } = createTestModule();
@@ -568,7 +635,6 @@ describe('E18 — startDate retroactive at approve (location tz / DST)', () => {
     await moduleRef.init();
     svc = moduleRef.get(TimeOffRequestService);
     balanceRepo = moduleRef.get(getRepositoryToken(Balance));
-    reqRepo = moduleRef.get(getRepositoryToken(TimeOffRequest));
     outboxRepo = moduleRef.get(getRepositoryToken(Outbox));
 
     // Clock starts at 2026-05-27 — before the startDate
@@ -584,7 +650,13 @@ describe('E18 — startDate retroactive at approve (location tz / DST)', () => {
 
   it('rejects at approve when startDate is in the past; reservation released; no outbox row', async () => {
     // Submit with a future start date (clock is at 2026-05-27)
-    const submitted = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', 'idem-e18');
+    const submitted = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-02',
+      'idem-e18',
+    );
     expect(submitted.status).toBe(RequestStatus.PENDING);
 
     // Balance: available=10, reserved=2
@@ -616,7 +688,9 @@ describe('E18 — startDate retroactive at approve (location tz / DST)', () => {
 // E25 — Retry-cap REJECTED after a FILE already landed → REVERSE undoes HCM deduction
 // ---------------------------------------------------------------------------
 describe('E25 — Retry-cap REJECTED after a FILE already landed → REVERSE undoes HCM deduction', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let dispatcher: OutboxDispatcherService;
   let balanceRepo: Repository<Balance>;
@@ -647,63 +721,74 @@ describe('E25 — Retry-cap REJECTED after a FILE already landed → REVERSE und
     await moduleRef.close();
   });
 
-  it(
-    'REVERSE is enqueued after retry-cap; when dispatched it credits HCM back to original balance',
-    async () => {
-      // Submit 2 days — local guard uses local balance (10 available) so this passes.
-      // hcm.getBalance will throw (timeout scenario) during approve, so approve skips HCM refresh.
-      const submitted = await svc.submit('emp1', 'loc1', FUTURE_START, FUTURE_END, 'idem-e25');
+  it('REVERSE is enqueued after retry-cap; when dispatched it credits HCM back to original balance', async () => {
+    // Submit 2 days — local guard uses local balance (10 available) so this passes.
+    // hcm.getBalance will throw (timeout scenario) during approve, so approve skips HCM refresh.
+    const submitted = await svc.submit(
+      'emp1',
+      'loc1',
+      FUTURE_START,
+      FUTURE_END,
+      'idem-e25',
+    );
 
-      // Approve — HCM unavailable (timeout), approve proceeds on local cache → PENDING_SYNC
-      const approved = await svc.approve(submitted.id, 'manager1');
-      expect(approved.status).toBe(RequestStatus.PENDING_SYNC);
+    // Approve — HCM unavailable (timeout), approve proceeds on local cache → PENDING_SYNC
+    const approved = await svc.approve(submitted.id, 'manager1');
+    expect(approved.status).toBe(RequestStatus.PENDING_SYNC);
 
-      // Local balance after approve: available=8, reserved=0
-      const balAfterApprove = await balanceRepo.findOneOrFail({
-        where: { employeeId: 'emp1', locationId: 'loc1' },
-      });
-      expect(balAfterApprove.available).toBe(8);
-      expect(balAfterApprove.reserved).toBe(0);
+    // Local balance after approve: available=8, reserved=0
+    const balAfterApprove = await balanceRepo.findOneOrFail({
+      where: { employeeId: 'emp1', locationId: 'loc1' },
+    });
+    expect(balAfterApprove.available).toBe(8);
+    expect(balAfterApprove.reserved).toBe(0);
 
-      // Dispatch 5 times — all fail (timeout). 5th hit cap → REVERSE enqueued.
-      for (let i = 0; i < 5; i++) {
-        await runDispatcherOnce(dispatcher);
-      }
-
-      // FILE row → FAILED
-      const fileRows = await outboxRepo.find({ where: { operation: OutboxOperation.FILE } });
-      expect(fileRows).toHaveLength(1);
-      expect(fileRows[0].status).toBe(OutboxStatus.FAILED);
-      expect(fileRows[0].attempts).toBe(5);
-
-      // Request → REJECTED
-      const reqAfter = await reqRepo.findOneOrFail({ where: { id: submitted.id } });
-      expect(reqAfter.status).toBe(RequestStatus.REJECTED);
-
-      // Local balance restored: available=10
-      const balAfter = await balanceRepo.findOneOrFail({
-        where: { employeeId: 'emp1', locationId: 'loc1' },
-      });
-      expect(balAfter.available).toBe(10);
-      expect(balAfter.reserved).toBe(0);
-
-      // A REVERSE outbox row enqueued
-      const reverseRows = await outboxRepo.find({ where: { operation: OutboxOperation.REVERSE } });
-      expect(reverseRows).toHaveLength(1);
-      expect(reverseRows[0].status).toBe(OutboxStatus.PENDING);
-      expect(reverseRows[0].idempotencyKey).toMatch(/:REVERSE$/);
-
-      // Switch to correct scenario and dispatch the REVERSE
-      // HCM had balance=8 (the phantom deduction); REVERSE should credit +2 → balance=10
-      hcm.setScenario('correct');
+    // Dispatch 5 times — all fail (timeout). 5th hit cap → REVERSE enqueued.
+    for (let i = 0; i < 5; i++) {
       await runDispatcherOnce(dispatcher);
+    }
 
-      const reverseSent = await outboxRepo.findOneOrFail({ where: { id: reverseRows[0].id } });
-      expect(reverseSent.status).toBe(OutboxStatus.SENT);
+    // FILE row → FAILED
+    const fileRows = await outboxRepo.find({
+      where: { operation: OutboxOperation.FILE },
+    });
+    expect(fileRows).toHaveLength(1);
+    expect(fileRows[0].status).toBe(OutboxStatus.FAILED);
+    expect(fileRows[0].attempts).toBe(5);
 
-      // HCM balance should be back to 10 (undone the phantom deduction)
-      const hcmBalanceAfterReverse = await hcm.getBalance('emp1', 'loc1');
-      expect(hcmBalanceAfterReverse.balance).toBe(10);
-    },
-  );
+    // Request → REJECTED
+    const reqAfter = await reqRepo.findOneOrFail({
+      where: { id: submitted.id },
+    });
+    expect(reqAfter.status).toBe(RequestStatus.REJECTED);
+
+    // Local balance restored: available=10
+    const balAfter = await balanceRepo.findOneOrFail({
+      where: { employeeId: 'emp1', locationId: 'loc1' },
+    });
+    expect(balAfter.available).toBe(10);
+    expect(balAfter.reserved).toBe(0);
+
+    // A REVERSE outbox row enqueued
+    const reverseRows = await outboxRepo.find({
+      where: { operation: OutboxOperation.REVERSE },
+    });
+    expect(reverseRows).toHaveLength(1);
+    expect(reverseRows[0].status).toBe(OutboxStatus.PENDING);
+    expect(reverseRows[0].idempotencyKey).toMatch(/:REVERSE$/);
+
+    // Switch to correct scenario and dispatch the REVERSE
+    // HCM had balance=8 (the phantom deduction); REVERSE should credit +2 → balance=10
+    hcm.setScenario('correct');
+    await runDispatcherOnce(dispatcher);
+
+    const reverseSent = await outboxRepo.findOneOrFail({
+      where: { id: reverseRows[0].id },
+    });
+    expect(reverseSent.status).toBe(OutboxStatus.SENT);
+
+    // HCM balance should be back to 10 (undone the phantom deduction)
+    const hcmBalanceAfterReverse = await hcm.getBalance('emp1', 'loc1');
+    expect(hcmBalanceAfterReverse.balance).toBe(10);
+  });
 });

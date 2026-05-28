@@ -35,18 +35,18 @@ import { ReservationReaperService } from '../reservation-reaper/reservation-reap
 // ---------------------------------------------------------------------------
 
 describe('E9 — Cancel approved request → available restored, REVERSE filed once', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
   let requestRepo: Repository<TimeOffRequest>;
   let outboxRepo: Repository<Outbox>;
   let dispatcher: OutboxDispatcherService;
-  let clock: ReturnType<typeof createTestModule>['clock'];
   let hcm: ReturnType<typeof createTestModule>['hcm'];
 
   beforeEach(async () => {
     const handles = createTestModule();
-    clock = handles.clock;
     hcm = handles.hcm;
     moduleRef = await handles.builder.compile();
     await moduleRef.init();
@@ -65,7 +65,13 @@ describe('E9 — Cancel approved request → available restored, REVERSE filed o
 
   it('cancel after approval: restores available, enqueues REVERSE, and REVERSE dispatches to HCM exactly once', async () => {
     // Submit 2 days (Mon-Tue Jun 1-2 = 2 business days)
-    const req = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', 'key-e9');
+    const req = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-02',
+      'key-e9',
+    );
     expect(req.status).toBe(RequestStatus.PENDING);
 
     // Approve → PENDING_SYNC (pure outbox model)
@@ -74,7 +80,9 @@ describe('E9 — Cancel approved request → available restored, REVERSE filed o
 
     // Run dispatcher once → FILE dispatched; request transitions to APPROVED
     await runDispatcherOnce(dispatcher);
-    const afterDispatch = await requestRepo.findOneOrFail({ where: { id: req.id } });
+    const afterDispatch = await requestRepo.findOneOrFail({
+      where: { id: req.id },
+    });
     expect(afterDispatch.status).toBe(RequestStatus.APPROVED);
 
     // HCM balance should be 10 - 2 = 8 after FILE
@@ -96,7 +104,9 @@ describe('E9 — Cancel approved request → available restored, REVERSE filed o
 
     // A REVERSE outbox row with PENDING status should exist
     const allOutbox = await outboxRepo.find({ where: { aggregateId: req.id } });
-    const reverseRow = allOutbox.find((o) => o.operation === OutboxOperation.REVERSE);
+    const reverseRow = allOutbox.find(
+      (o) => o.operation === OutboxOperation.REVERSE,
+    );
     expect(reverseRow).toBeDefined();
     expect(reverseRow!.status).toBe(OutboxStatus.PENDING);
     // Idempotency key must end in ':REVERSE'
@@ -109,11 +119,15 @@ describe('E9 — Cancel approved request → available restored, REVERSE filed o
     // Run dispatcher once — REVERSE should be sent
     await runDispatcherOnce(dispatcher);
 
-    const reverseRowAfter = await outboxRepo.findOneOrFail({ where: { id: reverseRow!.id } });
+    const reverseRowAfter = await outboxRepo.findOneOrFail({
+      where: { id: reverseRow!.id },
+    });
     expect(reverseRowAfter.status).toBe(OutboxStatus.SENT);
 
     // hcmAckAt on the request should be updated after REVERSE dispatch
-    const finalRequest = await requestRepo.findOneOrFail({ where: { id: req.id } });
+    const finalRequest = await requestRepo.findOneOrFail({
+      where: { id: req.id },
+    });
     expect(finalRequest.hcmAckAt).not.toBeNull();
 
     // HCM balance should be back to 10 after REVERSE
@@ -125,12 +139,20 @@ describe('E9 — Cancel approved request → available restored, REVERSE filed o
   });
 
   it('running dispatcher twice after cancel does NOT double-apply the REVERSE (idempotency)', async () => {
-    const req = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', 'key-e9-idem');
+    const req = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-02',
+      'key-e9-idem',
+    );
     await svc.approve(req.id, 'manager1');
     await runDispatcherOnce(dispatcher);
 
     // Verify APPROVED
-    const afterDispatch = await requestRepo.findOneOrFail({ where: { id: req.id } });
+    const afterDispatch = await requestRepo.findOneOrFail({
+      where: { id: req.id },
+    });
     expect(afterDispatch.status).toBe(RequestStatus.APPROVED);
 
     // Cancel
@@ -157,7 +179,9 @@ describe('E9 — Cancel approved request → available restored, REVERSE filed o
 // ---------------------------------------------------------------------------
 
 describe('E15 — Reservation past TTL → EXPIRED, reserved released', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
   let requestRepo: Repository<TimeOffRequest>;
@@ -186,7 +210,13 @@ describe('E15 — Reservation past TTL → EXPIRED, reserved released', () => {
 
   it('PENDING request past TTL → EXPIRED; available=10, reserved=0, no outbox rows', async () => {
     // Submit 2 days (PENDING). No approval — stays PENDING.
-    const req = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', 'key-e15');
+    const req = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-02',
+      'key-e15',
+    );
     expect(req.status).toBe(RequestStatus.PENDING);
 
     // Balance: available=10, reserved=2
@@ -215,7 +245,9 @@ describe('E15 — Reservation past TTL → EXPIRED, reserved released', () => {
 
     // For a PENDING request: no FILE was ever enqueued (approve was never called)
     // so Outbox count should be 0
-    const outboxRows = await outboxRepo.find({ where: { aggregateId: req.id } });
+    const outboxRows = await outboxRepo.find({
+      where: { aggregateId: req.id },
+    });
     expect(outboxRows).toHaveLength(0);
   });
 });
@@ -225,18 +257,18 @@ describe('E15 — Reservation past TTL → EXPIRED, reserved released', () => {
 // ---------------------------------------------------------------------------
 
 describe('E16 — Double cancel (same request, idempotent)', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
   let requestRepo: Repository<TimeOffRequest>;
   let outboxRepo: Repository<Outbox>;
   let dispatcher: OutboxDispatcherService;
-  let clock: ReturnType<typeof createTestModule>['clock'];
   let hcm: ReturnType<typeof createTestModule>['hcm'];
 
   beforeEach(async () => {
     const handles = createTestModule();
-    clock = handles.clock;
     hcm = handles.hcm;
     moduleRef = await handles.builder.compile();
     await moduleRef.init();
@@ -255,11 +287,19 @@ describe('E16 — Double cancel (same request, idempotent)', () => {
 
   it('second cancel is a no-op: returns same CANCELLED request, no new REVERSE, no double-restore', async () => {
     // Submit → approve → dispatch (→ APPROVED)
-    const req = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', 'key-e16');
+    const req = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-02',
+      'key-e16',
+    );
     await svc.approve(req.id, 'manager1');
     await runDispatcherOnce(dispatcher);
 
-    const afterDispatch = await requestRepo.findOneOrFail({ where: { id: req.id } });
+    const afterDispatch = await requestRepo.findOneOrFail({
+      where: { id: req.id },
+    });
     expect(afterDispatch.status).toBe(RequestStatus.APPROVED);
 
     // First cancel
@@ -273,7 +313,9 @@ describe('E16 — Double cancel (same request, idempotent)', () => {
     expect(balAfterFirstCancel.available).toBe(10); // restored
     expect(balAfterFirstCancel.reserved).toBe(0);
 
-    const outboxAfterFirst = await outboxRepo.find({ where: { aggregateId: req.id } });
+    const outboxAfterFirst = await outboxRepo.find({
+      where: { aggregateId: req.id },
+    });
     const reverseRowsAfterFirst = outboxAfterFirst.filter(
       (o) => o.operation === OutboxOperation.REVERSE,
     );
@@ -286,7 +328,9 @@ describe('E16 — Double cancel (same request, idempotent)', () => {
     expect(secondCancel.id).toBe(firstCancel.id);
 
     // No new REVERSE row enqueued (still exactly 1)
-    const outboxAfterSecond = await outboxRepo.find({ where: { aggregateId: req.id } });
+    const outboxAfterSecond = await outboxRepo.find({
+      where: { aggregateId: req.id },
+    });
     const reverseRowsAfterSecond = outboxAfterSecond.filter(
       (o) => o.operation === OutboxOperation.REVERSE,
     );
@@ -306,7 +350,9 @@ describe('E16 — Double cancel (same request, idempotent)', () => {
 // ---------------------------------------------------------------------------
 
 describe('E24 — Reaper expires PENDING_SYNC with FILE in-flight', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
   let requestRepo: Repository<TimeOffRequest>;
@@ -341,7 +387,13 @@ describe('E24 — Reaper expires PENDING_SYNC with FILE in-flight', () => {
     hcm.setScenario('timeout');
 
     // Submit 2 days
-    const req = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', 'key-e24');
+    const req = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-02',
+      'key-e24',
+    );
     expect(req.status).toBe(RequestStatus.PENDING);
 
     // Approve — HCM getBalance throws HcmUnavailableError (timeout scenario).
@@ -357,8 +409,12 @@ describe('E24 — Reaper expires PENDING_SYNC with FILE in-flight', () => {
     expect(balAfterApprove.reserved).toBe(0);
 
     // FILE outbox row should be PENDING (dispatcher not yet run)
-    const outboxBeforeReaper = await outboxRepo.find({ where: { aggregateId: req.id } });
-    const fileRowBefore = outboxBeforeReaper.find((o) => o.operation === OutboxOperation.FILE);
+    const outboxBeforeReaper = await outboxRepo.find({
+      where: { aggregateId: req.id },
+    });
+    const fileRowBefore = outboxBeforeReaper.find(
+      (o) => o.operation === OutboxOperation.FILE,
+    );
     expect(fileRowBefore).toBeDefined();
     expect(fileRowBefore!.status).toBe(OutboxStatus.PENDING);
 
@@ -381,7 +437,9 @@ describe('E24 — Reaper expires PENDING_SYNC with FILE in-flight', () => {
     expect(balAfterReaper.reserved).toBe(0);
 
     // FILE outbox row should now be VOIDED (voided in same txn as expiry — B2)
-    const fileRowAfter = await outboxRepo.findOneOrFail({ where: { id: fileRowBefore!.id } });
+    const fileRowAfter = await outboxRepo.findOneOrFail({
+      where: { id: fileRowBefore!.id },
+    });
     expect(fileRowAfter.status).toBe(OutboxStatus.VOIDED);
 
     // Reset call counters
@@ -401,23 +459,21 @@ describe('E24 — Reaper expires PENDING_SYNC with FILE in-flight', () => {
 describe('E27 — Cancel a PENDING_SYNC request', () => {
   // E27.a — FILE NOT YET SENT: cancel before running dispatcher
   describe('E27.a — FILE not yet sent: void FILE, restore balance, no REVERSE', () => {
-    let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+    let moduleRef: Awaited<
+      ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+    >;
     let svc: TimeOffRequestService;
     let balanceRepo: Repository<Balance>;
-    let requestRepo: Repository<TimeOffRequest>;
     let outboxRepo: Repository<Outbox>;
-    let clock: ReturnType<typeof createTestModule>['clock'];
     let hcm: ReturnType<typeof createTestModule>['hcm'];
 
     beforeEach(async () => {
       const handles = createTestModule();
-      clock = handles.clock;
       hcm = handles.hcm;
       moduleRef = await handles.builder.compile();
       await moduleRef.init();
       svc = moduleRef.get(TimeOffRequestService);
       balanceRepo = moduleRef.get(getRepositoryToken(Balance));
-      requestRepo = moduleRef.get(getRepositoryToken(TimeOffRequest));
       outboxRepo = moduleRef.get(getRepositoryToken(Outbox));
 
       await seedBalance(balanceRepo, { available: 10, reserved: 0 });
@@ -431,7 +487,13 @@ describe('E27 — Cancel a PENDING_SYNC request', () => {
 
     it('PENDING_SYNC + FILE unsent → CANCELLED, FILE VOIDED, available restored, no REVERSE row', async () => {
       // Submit 2 days
-      const req = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', 'key-e27a');
+      const req = await svc.submit(
+        'emp1',
+        'loc1',
+        '2026-06-01',
+        '2026-06-02',
+        'key-e27a',
+      );
       expect(req.status).toBe(RequestStatus.PENDING);
 
       // Approve under timeout: HCM getBalance fails → proceeds on local cache;
@@ -447,8 +509,12 @@ describe('E27 — Cancel a PENDING_SYNC request', () => {
       expect(balAfterApprove.reserved).toBe(0);
 
       // FILE row should be PENDING
-      const outboxBefore = await outboxRepo.find({ where: { aggregateId: req.id } });
-      const fileRow = outboxBefore.find((o) => o.operation === OutboxOperation.FILE);
+      const outboxBefore = await outboxRepo.find({
+        where: { aggregateId: req.id },
+      });
+      const fileRow = outboxBefore.find(
+        (o) => o.operation === OutboxOperation.FILE,
+      );
       expect(fileRow).toBeDefined();
       expect(fileRow!.status).toBe(OutboxStatus.PENDING);
 
@@ -464,12 +530,18 @@ describe('E27 — Cancel a PENDING_SYNC request', () => {
       expect(balAfterCancel.reserved).toBe(0);
 
       // FILE row should be VOIDED
-      const fileRowAfter = await outboxRepo.findOneOrFail({ where: { id: fileRow!.id } });
+      const fileRowAfter = await outboxRepo.findOneOrFail({
+        where: { id: fileRow!.id },
+      });
       expect(fileRowAfter.status).toBe(OutboxStatus.VOIDED);
 
       // No REVERSE row should exist (FILE was voided, nothing landed at HCM)
-      const allOutbox = await outboxRepo.find({ where: { aggregateId: req.id } });
-      const reverseRows = allOutbox.filter((o) => o.operation === OutboxOperation.REVERSE);
+      const allOutbox = await outboxRepo.find({
+        where: { aggregateId: req.id },
+      });
+      const reverseRows = allOutbox.filter(
+        (o) => o.operation === OutboxOperation.REVERSE,
+      );
       expect(reverseRows).toHaveLength(0);
     });
   });
@@ -481,26 +553,22 @@ describe('E27 — Cancel a PENDING_SYNC request', () => {
   // calling cancel. This simulates the dispatcher having already sent the FILE to HCM
   // but the request status update being racy (still PENDING_SYNC visible to cancel).
   describe('E27.b — FILE already sent: REVERSE enqueued, balance restored', () => {
-    let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+    let moduleRef: Awaited<
+      ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+    >;
     let svc: TimeOffRequestService;
     let balanceRepo: Repository<Balance>;
-    let requestRepo: Repository<TimeOffRequest>;
     let outboxRepo: Repository<Outbox>;
-    let dispatcher: OutboxDispatcherService;
-    let clock: ReturnType<typeof createTestModule>['clock'];
     let hcm: ReturnType<typeof createTestModule>['hcm'];
 
     beforeEach(async () => {
       const handles = createTestModule();
-      clock = handles.clock;
       hcm = handles.hcm;
       moduleRef = await handles.builder.compile();
       await moduleRef.init();
       svc = moduleRef.get(TimeOffRequestService);
       balanceRepo = moduleRef.get(getRepositoryToken(Balance));
-      requestRepo = moduleRef.get(getRepositoryToken(TimeOffRequest));
       outboxRepo = moduleRef.get(getRepositoryToken(Outbox));
-      dispatcher = moduleRef.get(OutboxDispatcherService);
 
       await seedBalance(balanceRepo, { available: 10, reserved: 0 });
       hcm.seedBalance('emp1', 'loc1', 10);
@@ -512,7 +580,13 @@ describe('E27 — Cancel a PENDING_SYNC request', () => {
       // Use 'timeout' to put request into PENDING_SYNC state after approve
       hcm.setScenario('timeout');
 
-      const req = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', 'key-e27b');
+      const req = await svc.submit(
+        'emp1',
+        'loc1',
+        '2026-06-01',
+        '2026-06-02',
+        'key-e27b',
+      );
       expect(req.status).toBe(RequestStatus.PENDING);
 
       // Approve → PENDING_SYNC (commit ran, FILE PENDING)
@@ -520,8 +594,12 @@ describe('E27 — Cancel a PENDING_SYNC request', () => {
       expect(pendingSync.status).toBe(RequestStatus.PENDING_SYNC);
 
       // Verify FILE row is PENDING
-      const outboxBeforeMutation = await outboxRepo.find({ where: { aggregateId: req.id } });
-      const fileRow = outboxBeforeMutation.find((o) => o.operation === OutboxOperation.FILE);
+      const outboxBeforeMutation = await outboxRepo.find({
+        where: { aggregateId: req.id },
+      });
+      const fileRow = outboxBeforeMutation.find(
+        (o) => o.operation === OutboxOperation.FILE,
+      );
       expect(fileRow).toBeDefined();
       expect(fileRow!.status).toBe(OutboxStatus.PENDING);
 
@@ -529,10 +607,15 @@ describe('E27 — Cancel a PENDING_SYNC request', () => {
       // Simulate: the dispatcher already sent the FILE to HCM but the request status
       // update was racy and still shows PENDING_SYNC. We directly mutate the outbox row
       // to SENT to replicate the "FILE already sent" branch in cancel().
-      await outboxRepo.update({ id: fileRow!.id }, { status: OutboxStatus.SENT });
+      await outboxRepo.update(
+        { id: fileRow!.id },
+        { status: OutboxStatus.SENT },
+      );
 
       // Verify the mutation took effect
-      const fileRowAfterMutation = await outboxRepo.findOneOrFail({ where: { id: fileRow!.id } });
+      const fileRowAfterMutation = await outboxRepo.findOneOrFail({
+        where: { id: fileRow!.id },
+      });
       expect(fileRowAfterMutation.status).toBe(OutboxStatus.SENT);
 
       // Now cancel the PENDING_SYNC request (FILE is SENT → should restore + enqueue REVERSE)
@@ -547,8 +630,12 @@ describe('E27 — Cancel a PENDING_SYNC request', () => {
       expect(balAfterCancel.reserved).toBe(0);
 
       // A REVERSE row should exist (PENDING)
-      const allOutbox = await outboxRepo.find({ where: { aggregateId: req.id } });
-      const reverseRows = allOutbox.filter((o) => o.operation === OutboxOperation.REVERSE);
+      const allOutbox = await outboxRepo.find({
+        where: { aggregateId: req.id },
+      });
+      const reverseRows = allOutbox.filter(
+        (o) => o.operation === OutboxOperation.REVERSE,
+      );
       expect(reverseRows).toHaveLength(1);
       expect(reverseRows[0].status).toBe(OutboxStatus.PENDING);
       // idempotency key ends in ':REVERSE'
@@ -562,16 +649,16 @@ describe('E27 — Cancel a PENDING_SYNC request', () => {
 // ---------------------------------------------------------------------------
 
 describe('balance arithmetic — Model A invariants', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
   let dispatcher: OutboxDispatcherService;
-  let clock: ReturnType<typeof createTestModule>['clock'];
   let hcm: ReturnType<typeof createTestModule>['hcm'];
 
   beforeEach(async () => {
     const handles = createTestModule();
-    clock = handles.clock;
     hcm = handles.hcm;
     moduleRef = await handles.builder.compile();
     await moduleRef.init();
@@ -588,7 +675,13 @@ describe('balance arithmetic — Model A invariants', () => {
 
   it('submit reserves days without touching available; reject releases reserved', async () => {
     // Submit 2 days (Jun 1-2 = 2 business days)
-    const req = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', 'key-b-submit');
+    const req = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-02',
+      'key-b-submit',
+    );
 
     // After submit: Model A → available unchanged, reserved += 2
     const balAfterSubmit = await balanceRepo.findOneOrFail({
@@ -609,7 +702,13 @@ describe('balance arithmetic — Model A invariants', () => {
 
   it('submit → approve → dispatcher → available=8, reserved=0; cancel → available=10, reserved=0', async () => {
     // Submit 2 days
-    const req = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', 'key-b-cancel');
+    const req = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-02',
+      'key-b-cancel',
+    );
 
     // Approve (pure outbox: commit → available-=2, reserved-=2, PENDING_SYNC)
     await svc.approve(req.id, 'manager1');
@@ -617,7 +716,9 @@ describe('balance arithmetic — Model A invariants', () => {
     // Dispatch → APPROVED
     await runDispatcherOnce(dispatcher);
 
-    const approvedReq = await svc['requestRepo'].findOneOrFail({ where: { id: req.id } });
+    const approvedReq = await svc['requestRepo'].findOneOrFail({
+      where: { id: req.id },
+    });
     expect(approvedReq.status).toBe(RequestStatus.APPROVED);
 
     const balAfterApprove = await balanceRepo.findOneOrFail({
@@ -643,24 +744,22 @@ describe('balance arithmetic — Model A invariants', () => {
 // ---------------------------------------------------------------------------
 
 describe('TimeOffRequestService — edge branches (coverage)', () => {
-  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let moduleRef: Awaited<
+    ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>
+  >;
   let svc: TimeOffRequestService;
   let balanceRepo: Repository<Balance>;
   let outboxRepo: Repository<Outbox>;
-  let clock: ReturnType<typeof createTestModule>['clock'];
   let hcm: ReturnType<typeof createTestModule>['hcm'];
-  let dispatcher: OutboxDispatcherService;
 
   beforeEach(async () => {
     const handles = createTestModule();
-    clock = handles.clock;
     hcm = handles.hcm;
     moduleRef = await handles.builder.compile();
     await moduleRef.init();
     svc = moduleRef.get(TimeOffRequestService);
     balanceRepo = moduleRef.get(getRepositoryToken(Balance));
     outboxRepo = moduleRef.get(getRepositoryToken(Outbox));
-    dispatcher = moduleRef.get(OutboxDispatcherService);
 
     await seedBalance(balanceRepo, { available: 10, reserved: 0 });
     hcm.seedBalance('emp1', 'loc1', 10);
@@ -681,15 +780,29 @@ describe('TimeOffRequestService — edge branches (coverage)', () => {
   });
 
   it('cancel on a REJECTED request throws BadRequestException (invalid terminal status branch)', async () => {
-    const req = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', 'key-reject-cancel');
+    const req = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-02',
+      'key-reject-cancel',
+    );
     await svc.reject(req.id, 'manager1');
-    await expect(svc.cancel(req.id, 'emp1')).rejects.toThrow(/Cannot cancel a request in status/);
+    await expect(svc.cancel(req.id, 'emp1')).rejects.toThrow(
+      /Cannot cancel a request in status/,
+    );
   });
 
   it('reject a PENDING_SYNC request: restores available and voids the FILE outbox row', async () => {
     // Put the request into PENDING_SYNC via approve under HCM timeout so FILE stays PENDING.
     hcm.setScenario('timeout');
-    const req = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', 'key-reject-ps');
+    const req = await svc.submit(
+      'emp1',
+      'loc1',
+      '2026-06-01',
+      '2026-06-02',
+      'key-reject-ps',
+    );
     const approved = await svc.approve(req.id, 'manager1');
     expect(approved.status).toBe(RequestStatus.PENDING_SYNC);
 
@@ -707,7 +820,9 @@ describe('TimeOffRequestService — edge branches (coverage)', () => {
     });
     expect(balAfter.available).toBe(10);
 
-    const fileRowAfter = await outboxRepo.findOneOrFail({ where: { id: fileRowBefore.id } });
+    const fileRowAfter = await outboxRepo.findOneOrFail({
+      where: { id: fileRowBefore.id },
+    });
     expect(fileRowAfter.status).toBe(OutboxStatus.VOIDED);
   });
 });
