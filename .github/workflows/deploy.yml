@@ -1,10 +1,14 @@
 name: Deploy
 
-# Deploys on push to master (after CI passes) and on manual dispatch.
-# Skip by including [skip deploy] in the commit message.
+# Manual dispatch ONLY until secrets are configured (see docs/DEPLOY.md).
+# Once DOCKERHUB_USERNAME/TOKEN + POLARIS_HOST/USER/SSH_KEY/PORT are set in
+# the repo's Actions secrets, re-add the push trigger to enable auto-deploy:
+#   on:
+#     push:
+#       branches: [master]
+#     workflow_dispatch:
+# Skip an individual push by including [skip deploy] in the commit message.
 on:
-  push:
-    branches: [master]
   workflow_dispatch:
 
 concurrency:
