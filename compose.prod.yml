@@ -26,7 +26,7 @@ services:
       mock-hcm:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
       interval: 30s
       timeout: 3s
       retries: 3
@@ -43,7 +43,6 @@ services:
           memory: 64M
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=space-server_web"
       - "traefik.http.routers.wizdaa-takehome.rule=Host(`ooo.cativo.dev`)"
       - "traefik.http.routers.wizdaa-takehome.entrypoints=websecure"
       - "traefik.http.routers.wizdaa-takehome.tls.certresolver=letsencryptresolver"
