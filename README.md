@@ -6,6 +6,31 @@ This service manages the employee time-off request lifecycle — submit, approve
 
 ---
 
+## Live demo
+
+A working deployment of this service is reachable at **<https://ooo.cativo.dev>** (Hetzner / Traefik / Let's Encrypt). The root endpoint returns `{"status":"ok"}`; the full API surface is open for hands-on exploration with the included Postman collection.
+
+```bash
+curl https://ooo.cativo.dev/                                                            # {"status":"ok"}
+curl https://ooo.cativo.dev/balance/emp1/loc1 -H 'X-Employee-Id: emp1' -H 'X-Role: employee'   # current balance (lazy-loaded from mock HCM)
+```
+
+The live stack runs the same `cativo23/wizdaa-takehome:latest` image built by CI; the mock HCM is bundled in-stack as the source-of-truth stand-in (in a real deployment the mock would be dropped and `HCM_BASE_URL` repointed). Deploy pipeline: GitHub Actions → Docker Hub → SSH to host → `docker compose pull && up -d` behind Traefik, with a `curl https://ooo.cativo.dev/` health gate. Full procedure: [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
+## Postman collection
+
+A curated Postman collection lives in [`docs/postman/`](docs/postman/) with two environments and nine guided scenarios (happy path, idempotency, HCM-silent-insufficient, retry-cap REVERSE, divergent batch, cancel-after-file, expired-reservation, mid-flight balance refresh, manager-only transitions). Import into Postman:
+
+| File | Use |
+|------|-----|
+| `Time-Off-Microservice.postman_collection.json` | The full collection (requests + tests + pre-request scripts) |
+| `Time-Off-Microservice.postman_environment.json` | **Local** environment — `base_url=http://localhost:3000`, `hcm_url=http://localhost:3101` |
+| `Time-Off-Microservice-Prod.postman_environment.json` | **Prod** environment — `base_url=https://ooo.cativo.dev` (HCM control surface is not exposed in prod) |
+
+The collection's variables (`employee_id`, `location_id`, `request_id`, `idempotency_key`) are scoped to the environment, so switching between Local and Prod is a one-click swap.
+
+---
+
 ## Quick start (Docker)
 
 ```bash
