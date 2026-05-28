@@ -366,9 +366,14 @@ export class TimeOffRequestService {
       // applyHcmSnapshot is a single-write on the balance — left outside the main
       // transaction; if the subsequent commit transaction rolls back, the snapshot
       // effect is at worst a slightly-fresher local cache, which is acceptable (ADR-013).
+      //
+      // Pass retry:false so a down HCM degrades fast (≤2.5 s) rather than
+      // burning the 31-second retry budget. ADR-001 already says approve falls
+      // through to local cache on HCM unavailable; this just makes the fallthrough
+      // fast rather than after 31 s of backoff.
       let hcmRefreshFailed = false;
       try {
-        const snapshot = await this.hcmClient.getBalance(req.employeeId, req.locationId);
+        const snapshot = await this.hcmClient.getBalance(req.employeeId, req.locationId, { retry: false });
         await this.balanceService.applyHcmSnapshot(snapshot);
 
         // Re-validate after snapshot update (ADR-001 step 3, E10).

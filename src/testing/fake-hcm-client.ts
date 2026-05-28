@@ -9,7 +9,7 @@
  * with zero I/O overhead.
  */
 
-import type { HcmClient } from '../hcm/contracts/hcm-client.interface';
+import type { HcmClient, HcmGetBalanceOptions } from '../hcm/contracts/hcm-client.interface';
 import type {
   HcmBalance,
   FileTimeOffCommand,
@@ -122,8 +122,14 @@ export class FakeHcmClient implements HcmClient {
    * - timeout            → throws HcmUnavailableError (no real delay)
    * - mutate-between-calls → decrements balance by 1 on every call (E10)
    * - all others         → returns stored value (auto-seeds zero on miss)
+   *
+   * opts is accepted for interface compatibility but intentionally ignored:
+   * the fake is already instant and has no retry loop, so retry:false has no
+   * observable effect. Production behaviour (fast vs. full retry) is covered by
+   * the real-integration spec (src/__tests__/hcm-real-integration.spec.ts).
    */
-  async getBalance(employeeId: string, locationId: string): Promise<HcmBalance> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async getBalance(employeeId: string, locationId: string, opts?: HcmGetBalanceOptions): Promise<HcmBalance> {
     this.callsTo.getBalance += 1;
 
     if (this.scenario === 'timeout') {

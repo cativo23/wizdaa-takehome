@@ -201,9 +201,12 @@ export class BalanceService {
       }
 
       // Still cold — perform a single HCM read.
+      // Pass retry:false so a down HCM degrades fast (≤2.5 s) instead of
+      // burning the full 31-second retry budget. The caller has a graceful
+      // local fallback (ephemeral degraded DTO — ADR-014).
       let snapshot;
       try {
-        snapshot = await this.hcmClient.getBalance(employeeId, locationId);
+        snapshot = await this.hcmClient.getBalance(employeeId, locationId, { retry: false });
       } catch (err) {
         if (err instanceof HcmUnavailableError) {
           // CRITICAL: do NOT persist anything. Return an ephemeral DTO so the

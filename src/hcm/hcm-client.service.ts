@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
-import { HcmClient } from './contracts/hcm-client.interface.js';
+import { HcmClient, HcmGetBalanceOptions } from './contracts/hcm-client.interface.js';
 import {
   HcmBalance,
   FileTimeOffCommand,
@@ -12,6 +12,13 @@ import {
 } from './contracts/hcm.types.js';
 import { AppConfigService } from '../config/app-config.service.js';
 import { HcmUnavailableError } from './hcm.errors.js';
+
+/**
+ * Per-request timeout (ms) used when opts.retry === false.
+ * Chosen to be well under the typical user-facing SLA for read paths that
+ * have a local fallback (ADR-014 / ADR-001).
+ */
+const NO_RETRY_TIMEOUT_MS = 2500;
 
 /**
  * HcmClientService — production implementation of HcmClient.
@@ -44,20 +51,52 @@ export class HcmClientService implements HcmClient {
   /**
    * GET /hcm/balance?employeeId=&locationId=
    *
-   * Retries on network errors and 5xx responses with exponential backoff.
-   * A business-level 4xx (invalid dimensions) is treated as a best-effort
-   * response and re-throws to let the caller handle it — but in practice the
-   * approve flow will treat it as an HCM hint.
+   * Default (opts.retry !== false):
+   *   Retries on network errors and 5xx responses with exponential backoff up to
+   *   hcmRetryMaxAttempts. A business-level 4xx is escalated immediately.
+   *   THROWS HcmUnavailableError when every attempt fails.
    *
-   * THROWS HcmUnavailableError when every attempt fails (network / 5xx).
+   * Fast-fail (opts.retry === false):
+   *   Single attempt with a 2500 ms per-request axios timeout. Any failure
+   *   (network, timeout, 5xx, 4xx) immediately throws HcmUnavailableError.
+   *   Use this on read paths that have a local fallback (ADR-014 cold-read,
+   *   ADR-001 approve refresh) to avoid burning the 31-second retry budget
+   *   when the caller can degrade gracefully.
    */
   async getBalance(
     employeeId: string,
     locationId: string,
+    opts?: HcmGetBalanceOptions,
   ): Promise<HcmBalance> {
     const url = `${this.config.hcmBaseUrl}/hcm/balance`;
     const operationId = `getBalance:${employeeId}:${locationId}`;
 
+    if (opts?.retry === false) {
+      // Fast-fail path: single attempt, short timeout, no backoff.
+      try {
+        this.logger.debug(
+          `[HCM] getBalance fast-fail attempt=1 employee=${employeeId} location=${locationId}`,
+        );
+
+        const response = await firstValueFrom(
+          this.http.get<HcmBalance>(url, {
+            params: { employeeId, locationId },
+            timeout: NO_RETRY_TIMEOUT_MS,
+          }),
+        );
+
+        this.logger.debug(
+          `[HCM] getBalance fast-fail ok employee=${employeeId} location=${locationId}`,
+        );
+
+        return response.data;
+      } catch (err) {
+        // Any failure on the fast-fail path → immediately signal unavailable.
+        throw new HcmUnavailableError(operationId, err);
+      }
+    }
+
+    // Default path: full retry budget with exponential backoff.
     let lastError: unknown;
 
     for (let attempt = 0; attempt < this.config.hcmRetryMaxAttempts; attempt++) {

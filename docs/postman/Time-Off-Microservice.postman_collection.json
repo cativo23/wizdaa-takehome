@@ -435,88 +435,1635 @@
     },
     {
       "name": "6. Guided Scenarios",
-      "description": "Walkthroughs that exercise key E-matrix flows end-to-end. Each scenario lists the requests to run in order and what to verify at each step. Folders 1–5 hold the actual reusable requests — these notes glue them together.\n\nReset between scenarios by running **Mock HCM Controls → Seed / refresh HCM balance** with your starting value, and the **DELETE volumes** Docker step if you want a fresh DB (`docker compose down -v && docker compose up -d`).",
+      "description": "Runnable end-to-end scenario folders. Each sub-folder maps to one E-matrix flow. Select a folder and use **Run folder** (Collection Runner) to execute every step in order.\n\nReset between scenarios: run **Mock HCM Controls → Seed / refresh HCM balance** with your starting value. For a completely clean DB use `docker compose down -v && docker compose up -d`.",
       "item": [
         {
           "name": "A — Happy path (submit → approve → APPROVED)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
-            "description": "## A — Happy path\n\nDemonstrates the canonical lifecycle through the Pure Outbox dispatcher.\n\n1. **Setup → Mock HCM Controls → Seed / refresh HCM balance** with `balance: 20`.\n2. **Employee Workflow → View own balance** — expect `available=0, reserved=0` (first read auto-creates a zero row).\n3. **Mock HCM Controls → Set scenario** with `correct`.\n4. **Employee Workflow → Submit time-off** — request lands `PENDING`, `reserved=2`.\n5. **Employee Workflow → View own balance** — expect `available=0, reserved=2`.\n6. **Manager Workflow → Approve request** — server commits locally, writes outbox FILE, status → **PENDING_SYNC**. The collection's test script accepts PENDING_SYNC or APPROVED depending on dispatcher timing.\n7. Wait ~5s (or run multiple GETs) for the dispatcher's `@Interval(5000)` to fire — it sends the FILE to mock HCM and promotes status to **APPROVED**.\n8. **Employee Workflow → View own balance** — expect `available` dropped by 2 (Model A: commit reduced available).\n9. **Mock HCM Controls → Direct: get HCM balance** — expect HCM-side balance is 18 (the FILE landed and deducted).\n\nThe `GET /` body of this request is a placeholder so Postman lets you click 'Send' on a guide; the real action is in the description above."
-          }
+          "description": "## Goal\nWalk the canonical lifecycle through the Pure Outbox dispatcher: seed HCM → lazy-hydrate balance → submit → approve → wait for dispatcher → verify APPROVED and balance deducted.\n\n## Expected flow\n1. Seed HCM to 20 days.\n2. Set scenario to `correct`.\n3. View balance — cold read triggers lazy-hydrate (ADR-014); `available=20` returned.\n4. Submit 2 business days (Jun 1–2) → PENDING, `reserved=2`.\n5. View balance → `available=20, reserved=2`.\n6. Approve → PENDING_SYNC (Pure Outbox: dispatcher fires every 5 s).\n7. Wait 6 s for dispatcher tick.\n8. View balance → `available=18, reserved=0` (FILE acked, deduction committed).\n9. Check HCM directly → `balance=18`.\n\n## What to verify\n- Step 4: status=PENDING, id saved to `request_id`.\n- Step 6: status in [PENDING_SYNC, APPROVED].\n- Step 8: available=18, reserved=0.\n- Step 9: HCM-side balance=18.",
+          "item": [
+            {
+              "name": "A1 — Seed HCM balance (20)",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"balance\": 20\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {
+                  "raw": "{{hcm_url}}/_control/refresh",
+                  "host": ["{{hcm_url}}"],
+                  "path": ["_control", "refresh"]
+                },
+                "description": "Seed HCM-side balance to 20 for a clean starting state."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["pm.test('Seed OK', () => pm.response.to.have.status(200));"]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "A2 — Set scenario: correct",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"scenario\": \"correct\"\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {
+                  "raw": "{{hcm_url}}/_control/scenario",
+                  "host": ["{{hcm_url}}"],
+                  "path": ["_control", "scenario"]
+                },
+                "description": "Switch mock HCM to normal correct behavior."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["pm.test('Scenario set OK', () => pm.response.to.have.status(200));"]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "A3 — View balance (cold-read lazy-hydrate)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+                  {"key": "X-Role", "value": "employee"}
+                ],
+                "url": {
+                  "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["balances"],
+                  "query": [
+                    {"key": "employeeId", "value": "{{employee_id}}"},
+                    {"key": "locationId", "value": "{{location_id}}"}
+                  ]
+                },
+                "description": "First read on a cold (lastHcmAsOf=null) tuple triggers ADR-014 lazy-hydration from HCM. Assert available=20 and lastHcmAsOf is present."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('available=20 after lazy-hydrate', () => {",
+                      "  const j = pm.response.json();",
+                      "  pm.expect(j.available).to.eql(20);",
+                      "});",
+                      "pm.test('lastHcmAsOf is present', () => {",
+                      "  pm.expect(pm.response.json().lastHcmAsOf).to.be.a('string');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "A4 — Submit time-off (Jun 1–2, 2 days)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const uuid = (typeof crypto !== 'undefined' && crypto.randomUUID)",
+                      "  ? crypto.randomUUID()",
+                      "  : 'idem-' + Date.now() + '-' + Math.random().toString(36).slice(2);",
+                      "pm.collectionVariables.set('idempotency_key', uuid);"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Status=PENDING, id saved', () => {",
+                      "  const j = pm.response.json();",
+                      "  pm.expect(j.status).to.eql('PENDING');",
+                      "  pm.expect(j.id).to.be.a('string');",
+                      "  pm.collectionVariables.set('request_id', j.id);",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+                  {"key": "X-Role", "value": "employee"},
+                  {"key": "Idempotency-Key", "value": "{{idempotency_key}}"},
+                  {"key": "Content-Type", "value": "application/json"}
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"startDate\": \"2026-06-01\",\n  \"endDate\": \"2026-06-02\"\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {
+                  "raw": "{{base_url}}/time-off-requests",
+                  "host": ["{{base_url}}"],
+                  "path": ["time-off-requests"]
+                },
+                "description": "Submit 2 business days. Expect 201, status=PENDING, request_id captured."
+              }
+            },
+            {
+              "name": "A5 — View balance (reserved=2)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+                  {"key": "X-Role", "value": "employee"}
+                ],
+                "url": {
+                  "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["balances"],
+                  "query": [
+                    {"key": "employeeId", "value": "{{employee_id}}"},
+                    {"key": "locationId", "value": "{{location_id}}"}
+                  ]
+                },
+                "description": "After submit: available=20 (unchanged), reserved=2 (days held). Model A: available is decremented at commit, not at reserve."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('available=20, reserved=2', () => {",
+                      "  const j = pm.response.json();",
+                      "  pm.expect(j.available).to.eql(20);",
+                      "  pm.expect(j.reserved).to.eql(2);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "A6 — Approve request",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{manager_id}}"},
+                  {"key": "X-Role", "value": "manager"},
+                  {"key": "Content-Type", "value": "application/json"}
+                ],
+                "body": {"mode": "raw", "raw": "{}", "options": {"raw": {"language": "json"}}},
+                "url": {
+                  "raw": "{{base_url}}/time-off-requests/{{request_id}}/approve",
+                  "host": ["{{base_url}}"],
+                  "path": ["time-off-requests", "{{request_id}}", "approve"]
+                },
+                "description": "Manager approves. Under Pure Outbox, status lands in PENDING_SYNC. Dispatcher promotes to APPROVED on FILE ack (~5 s)."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200/201', () => pm.expect([200, 201]).to.include(pm.response.code));",
+                      "pm.test('Status is PENDING_SYNC or APPROVED', () => {",
+                      "  pm.expect(['PENDING_SYNC', 'APPROVED']).to.include(pm.response.json().status);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "⏱ Wait 6s (dispatcher tick)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// Pause 6 seconds so the @Interval(5000) dispatcher has time to fire and ack the FILE.",
+                      "const now = Date.now();",
+                      "while (Date.now() - now < 6000) { /* busy-wait */ }"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["pm.test('Wait complete', () => pm.response.to.have.status(200));"]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/",
+                  "host": ["{{base_url}}"],
+                  "path": [""]
+                },
+                "description": "Busy-wait 6 s in the pre-request script so the dispatcher @Interval(5000) has fired at least once and promoted the outbox FILE."
+              }
+            },
+            {
+              "name": "A7 — View balance (available=18, reserved=0)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+                  {"key": "X-Role", "value": "employee"}
+                ],
+                "url": {
+                  "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["balances"],
+                  "query": [
+                    {"key": "employeeId", "value": "{{employee_id}}"},
+                    {"key": "locationId", "value": "{{location_id}}"}
+                  ]
+                },
+                "description": "Post-approval: commit deducted available by 2 and cleared the reservation. Expect available=18, reserved=0."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('available=18, reserved=0', () => {",
+                      "  const j = pm.response.json();",
+                      "  pm.expect(j.available).to.eql(18);",
+                      "  pm.expect(j.reserved).to.eql(0);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "A8 — Direct: verify HCM balance=18",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{hcm_url}}/hcm/balance?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{hcm_url}}"],
+                  "path": ["hcm", "balance"],
+                  "query": [
+                    {"key": "employeeId", "value": "{{employee_id}}"},
+                    {"key": "locationId", "value": "{{location_id}}"}
+                  ]
+                },
+                "description": "Cross-check HCM side: the FILE landed and deducted 2 days. Expect balance=18."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('HCM balance=18', () => {",
+                      "  pm.expect(pm.response.json().balance).to.eql(18);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
         },
         {
           "name": "B — Insufficient balance at submit (E1)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
-            "description": "## B — E1 Insufficient at submit\n\n1. **Mock HCM → Refresh** with `balance: 2` (small).\n2. **Mock HCM → Set scenario** `correct`.\n3. Edit **Submit time-off** to span a long range (e.g. `startDate: 2026-06-01`, `endDate: 2026-06-30` → ~22 business days).\n4. **Submit** — expect **409 Conflict** with a message about `available − reserved < days`.\n5. **View balance** — no reservation occurred (balance unchanged).\n\nThe local guard (`available − reserved < days`) rejects before any HCM call. ADR-001 / E1."
-          }
+          "description": "## Goal\nVerify the local guard rejects a submit that would exceed available balance (E1, ADR-001).\n\n## Expected flow\n1. Seed HCM to 2 days and set scenario correct.\n2. View balance → lazy-hydrate to available=2.\n3. Submit 22 business days (Jun 1–Jun 30) → 409 Conflict.\n\n## What to verify\n- Step 3: 409 with a message about insufficient balance.\n- No reservation created: view balance after 409 still shows reserved=0.",
+          "item": [
+            {
+              "name": "B1 — Seed HCM balance (2)",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"balance\": 2\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {
+                  "raw": "{{hcm_url}}/_control/refresh",
+                  "host": ["{{hcm_url}}"],
+                  "path": ["_control", "refresh"]
+                },
+                "description": "Seed HCM to only 2 days — insufficient for a long request."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["pm.test('Seed OK', () => pm.response.to.have.status(200));"]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "B2 — Set scenario: correct",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"scenario\": \"correct\"\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {
+                  "raw": "{{hcm_url}}/_control/scenario",
+                  "host": ["{{hcm_url}}"],
+                  "path": ["_control", "scenario"]
+                },
+                "description": "Normal HCM behavior."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["pm.test('Scenario set OK', () => pm.response.to.have.status(200));"]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "B3 — View balance (lazy-hydrate to 2)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+                  {"key": "X-Role", "value": "employee"}
+                ],
+                "url": {
+                  "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["balances"],
+                  "query": [
+                    {"key": "employeeId", "value": "{{employee_id}}"},
+                    {"key": "locationId", "value": "{{location_id}}"}
+                  ]
+                },
+                "description": "Cold-read forces lazy-hydrate; available should reflect 2."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('available=2 after hydration', () => {",
+                      "  pm.expect(pm.response.json().available).to.eql(2);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "B4 — Submit 22 days → 409 Conflict (E1)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const uuid = (typeof crypto !== 'undefined' && crypto.randomUUID)",
+                      "  ? crypto.randomUUID()",
+                      "  : 'idem-' + Date.now() + '-' + Math.random().toString(36).slice(2);",
+                      "pm.collectionVariables.set('idempotency_key', uuid);"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('409 Conflict — insufficient balance', () => pm.response.to.have.status(409));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+                  {"key": "X-Role", "value": "employee"},
+                  {"key": "Idempotency-Key", "value": "{{idempotency_key}}"},
+                  {"key": "Content-Type", "value": "application/json"}
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"startDate\": \"2026-06-01\",\n  \"endDate\": \"2026-06-30\"\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {
+                  "raw": "{{base_url}}/time-off-requests",
+                  "host": ["{{base_url}}"],
+                  "path": ["time-off-requests"]
+                },
+                "description": "Jun 1–30 spans ~22 business days, far exceeding available=2. Expect 409 ConflictException from the local guard (ADR-001/E1)."
+              }
+            },
+            {
+              "name": "B5 — View balance (no reservation created)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+                  {"key": "X-Role", "value": "employee"}
+                ],
+                "url": {
+                  "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["balances"],
+                  "query": [
+                    {"key": "employeeId", "value": "{{employee_id}}"},
+                    {"key": "locationId", "value": "{{location_id}}"}
+                  ]
+                },
+                "description": "Guard fired before any reservation — reserved must still be 0."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('reserved=0 — no reservation created', () => {",
+                      "  pm.expect(pm.response.json().reserved).to.eql(0);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
         },
         {
-          "name": "C — Duplicate submit (idempotency replay) (E8)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
-            "description": "## C — E8 Idempotent replay\n\n1. **Mock HCM → Refresh** with `balance: 20`.\n2. Set collection variable `reuse_idempotency_key = true` (forces the pre-request script to reuse the existing `idempotency_key`).\n3. **Submit time-off** — captures `request_id` and an `idempotency_key`.\n4. **Submit** again WITHOUT changing the body — expect the SAME `id` is returned. `reserved` did NOT double.\n5. Now change the date range in the body and **Submit** again with the same key — expect **422 Unprocessable** (key-reuse-with-different-body, E23).\n6. Set `reuse_idempotency_key = false` to restore fresh-UUID behavior."
-          }
+          "name": "C — Idempotent replay (E8)",
+          "description": "## Goal\nProve that submitting twice with the same `Idempotency-Key` returns the same request ID and does NOT double the reservation (E8, ADR-012 guard ①).\n\n## Expected flow\n1. Seed balance=20, scenario correct, view balance.\n2. Submit with fixed key `e8-replay-key` → PENDING, id=X, reserved=2.\n3. Submit again with the same fixed key and identical body → same id=X returned, reserved still =2.\n4. View balance → reserved=2, not 4.\n\n## What to verify\n- Step 3: response id matches step 2 id.\n- Step 4: reserved=2 (single reservation).",
+          "item": [
+            {
+              "name": "C1 — Seed HCM balance (20)",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"balance\": 20\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {
+                  "raw": "{{hcm_url}}/_control/refresh",
+                  "host": ["{{hcm_url}}"],
+                  "path": ["_control", "refresh"]
+                },
+                "description": "Seed to 20."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["pm.test('Seed OK', () => pm.response.to.have.status(200));"]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "C2 — Set scenario: correct",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"scenario\": \"correct\"\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {
+                  "raw": "{{hcm_url}}/_control/scenario",
+                  "host": ["{{hcm_url}}"],
+                  "path": ["_control", "scenario"]
+                },
+                "description": "Normal HCM behavior."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["pm.test('Scenario set OK', () => pm.response.to.have.status(200));"]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "C3 — View balance (lazy-hydrate)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+                  {"key": "X-Role", "value": "employee"}
+                ],
+                "url": {
+                  "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["balances"],
+                  "query": [
+                    {"key": "employeeId", "value": "{{employee_id}}"},
+                    {"key": "locationId", "value": "{{location_id}}"}
+                  ]
+                },
+                "description": "Warm up the balance row via lazy-hydrate."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "C4 — Submit #1 (fixed key e8-replay-key)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// Use a fixed replay key for this scenario.",
+                      "pm.collectionVariables.set('idempotency_key_replay', 'e8-replay-key-' + pm.collectionVariables.get('employee_id'));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                      "pm.test('PENDING, id saved', () => {",
+                      "  const j = pm.response.json();",
+                      "  pm.expect(j.status).to.eql('PENDING');",
+                      "  pm.collectionVariables.set('request_id', j.id);",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+                  {"key": "X-Role", "value": "employee"},
+                  {"key": "Idempotency-Key", "value": "{{idempotency_key_replay}}"},
+                  {"key": "Content-Type", "value": "application/json"}
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"startDate\": \"2026-06-01\",\n  \"endDate\": \"2026-06-02\"\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {
+                  "raw": "{{base_url}}/time-off-requests",
+                  "host": ["{{base_url}}"],
+                  "path": ["time-off-requests"]
+                },
+                "description": "First submit with fixed key. Captures id1 into request_id."
+              }
+            },
+            {
+              "name": "C5 — Submit #2 (same key, same body) → same id returned",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// Ensure the same fixed key is still set (no re-generation).",
+                      "pm.collectionVariables.set('idempotency_key_replay', 'e8-replay-key-' + pm.collectionVariables.get('employee_id'));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200 or 201 (idempotent replay)', () => pm.expect([200, 201]).to.include(pm.response.code));",
+                      "pm.test('Same id returned as first submit', () => {",
+                      "  pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('request_id'));",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+                  {"key": "X-Role", "value": "employee"},
+                  {"key": "Idempotency-Key", "value": "{{idempotency_key_replay}}"},
+                  {"key": "Content-Type", "value": "application/json"}
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"startDate\": \"2026-06-01\",\n  \"endDate\": \"2026-06-02\"\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {
+                  "raw": "{{base_url}}/time-off-requests",
+                  "host": ["{{base_url}}"],
+                  "path": ["time-off-requests"]
+                },
+                "description": "Exact replay of C4 — same key, same body. Service must return the existing request (same id), not create a second one."
+              }
+            },
+            {
+              "name": "C6 — View balance (reserved=2, not 4)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+                  {"key": "X-Role", "value": "employee"}
+                ],
+                "url": {
+                  "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["balances"],
+                  "query": [
+                    {"key": "employeeId", "value": "{{employee_id}}"},
+                    {"key": "locationId", "value": "{{location_id}}"}
+                  ]
+                },
+                "description": "Idempotent replay must NOT double the reservation. Assert reserved=2."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('reserved=2 — single reservation only', () => {",
+                      "  pm.expect(pm.response.json().reserved).to.eql(2);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
         },
         {
-          "name": "D — Boundary overlap (E20)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
-            "description": "## D — E20 Boundary-touching ranges collide\n\n1. **Refresh** balance to 20; scenario `correct`.\n2. **Submit** `startDate=2026-06-02, endDate=2026-06-03`. Expect PENDING.\n3. Set `reuse_idempotency_key = false` (so a NEW key is generated).\n4. **Submit** with the same `{{employee_id}}/{{location_id}}` but `startDate=2026-06-03, endDate=2026-06-04`. Expect **409 Conflict** — the inclusive overlap predicate catches the shared June 3.\n\nADR-012 ②. Boundary-touching ranges are rejected, not silently trimmed."
-          }
+          "name": "D — Boundary-touching overlap (E20)",
+          "description": "## Goal\nVerify the inclusive overlap predicate rejects a second submit whose date range shares exactly one boundary day with an existing active request (E20, ADR-012 guard ②).\n\n## Expected flow\n1. Seed balance=20, scenario correct, view balance.\n2. Submit Jun 2–3 (key D1) → PENDING.\n3. Submit Jun 3–4 (key D2, new key) → 409 Conflict (shared Jun 3).\n\n## What to verify\n- Step 3: 409, not a new PENDING request.",
+          "item": [
+            {
+              "name": "D1 — Seed HCM balance (20)",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"balance\": 20\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {
+                  "raw": "{{hcm_url}}/_control/refresh",
+                  "host": ["{{hcm_url}}"],
+                  "path": ["_control", "refresh"]
+                },
+                "description": "Seed HCM to 20."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["pm.test('Seed OK', () => pm.response.to.have.status(200));"]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "D2 — Set scenario: correct",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"scenario\": \"correct\"\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {
+                  "raw": "{{hcm_url}}/_control/scenario",
+                  "host": ["{{hcm_url}}"],
+                  "path": ["_control", "scenario"]
+                },
+                "description": "Normal HCM behavior."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["pm.test('Scenario set OK', () => pm.response.to.have.status(200));"]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "D3 — View balance (lazy-hydrate)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+                  {"key": "X-Role", "value": "employee"}
+                ],
+                "url": {
+                  "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["balances"],
+                  "query": [
+                    {"key": "employeeId", "value": "{{employee_id}}"},
+                    {"key": "locationId", "value": "{{location_id}}"}
+                  ]
+                },
+                "description": "Warm up the balance row."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "D4 — Submit Jun 2–3 (key D1)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set('idempotency_key', 'd20-key-1-' + Date.now());"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                      "pm.test('First request PENDING', () => pm.expect(pm.response.json().status).to.eql('PENDING'));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+                  {"key": "X-Role", "value": "employee"},
+                  {"key": "Idempotency-Key", "value": "{{idempotency_key}}"},
+                  {"key": "Content-Type", "value": "application/json"}
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"startDate\": \"2026-06-02\",\n  \"endDate\": \"2026-06-03\"\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {
+                  "raw": "{{base_url}}/time-off-requests",
+                  "host": ["{{base_url}}"],
+                  "path": ["time-off-requests"]
+                },
+                "description": "First submit: Jun 2–3. Expect PENDING."
+              }
+            },
+            {
+              "name": "D5 — Submit Jun 3–4 (key D2) → 409 overlap (E20)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// Fresh key so this is NOT an idempotency replay — tests overlap guard.",
+                      "pm.collectionVariables.set('idempotency_key', 'd20-key-2-' + Date.now());"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('409 Conflict — boundary overlap on shared Jun 3', () => pm.response.to.have.status(409));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"},
+                  {"key": "X-Role", "value": "employee"},
+                  {"key": "Idempotency-Key", "value": "{{idempotency_key}}"},
+                  {"key": "Content-Type", "value": "application/json"}
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"startDate\": \"2026-06-03\",\n  \"endDate\": \"2026-06-04\"\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {
+                  "raw": "{{base_url}}/time-off-requests",
+                  "host": ["{{base_url}}"],
+                  "path": ["time-off-requests"]
+                },
+                "description": "Jun 3–4 shares Jun 3 with the first request. Inclusive overlap predicate (newStart <= existingEnd AND newEnd >= existingStart) → 409. ADR-012 ②/E20."
+              }
+            }
+          ]
         },
         {
-          "name": "E — Cancel approved request → REVERSE (E9)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
-            "description": "## E — E9 Cancel approved\n\n1. Walk through scenario **A** so a request reaches `APPROVED` and HCM-side balance is debited (e.g. 18).\n2. **Employee Workflow → Cancel** the captured `request_id`. Status → `CANCELLED`. `available += days`. A REVERSE outbox row is enqueued with key `{hcmIdempotencyKey}:REVERSE`.\n3. Wait ~5s for the dispatcher to send the REVERSE.\n4. **Mock HCM → Direct: get HCM balance** — expect balance back at 20 (REVERSE credited the days back at HCM).\n\nIdempotency: the REVERSE key is suffixed, so HCM cannot conflate it with the FILE."
-          }
+          "name": "E — Cancel approved → REVERSE (E9)",
+          "description": "## Goal\nVerify that cancelling an APPROVED request restores the local balance and the dispatcher sends a REVERSE to HCM, which credits the days back (E9, FR-6, ADR-004/008).\n\n## Expected flow\n1–7: Replay scenario A (seed, scenario, hydrate, submit, view, approve, wait 6 s).\n8. Cancel the approved request → CANCELLED, available restored.\n9. Wait 6 s for the REVERSE dispatcher tick.\n10. Check HCM balance directly → back to 20.\n\n## What to verify\n- Step 8: status=CANCELLED.\n- Step 10: HCM balance=20 (REVERSE applied).",
+          "item": [
+            {
+              "name": "E-A1 — Seed HCM balance (20)",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"balance\": 20\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {
+                  "raw": "{{hcm_url}}/_control/refresh",
+                  "host": ["{{hcm_url}}"],
+                  "path": ["_control", "refresh"]
+                },
+                "description": "Seed HCM to 20."
+              },
+              "event": [
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Seed OK', () => pm.response.to.have.status(200));"]}}
+              ]
+            },
+            {
+              "name": "E-A2 — Set scenario: correct",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {"mode": "raw", "raw": "{\n  \"scenario\": \"correct\"\n}", "options": {"raw": {"language": "json"}}},
+                "url": {"raw": "{{hcm_url}}/_control/scenario", "host": ["{{hcm_url}}"], "path": ["_control", "scenario"]},
+                "description": "Normal HCM behavior."
+              },
+              "event": [
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('OK', () => pm.response.to.have.status(200));"]}}
+              ]
+            },
+            {
+              "name": "E-A3 — View balance (lazy-hydrate)",
+              "request": {
+                "method": "GET",
+                "header": [{"key": "X-Employee-Id", "value": "{{employee_id}}"}, {"key": "X-Role", "value": "employee"}],
+                "url": {
+                  "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{base_url}}"], "path": ["balances"],
+                  "query": [{"key": "employeeId", "value": "{{employee_id}}"}, {"key": "locationId", "value": "{{location_id}}"}]
+                },
+                "description": "Warm up balance via ADR-014."
+              },
+              "event": [
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"]}}
+              ]
+            },
+            {
+              "name": "E-A4 — Submit (Jun 1–2)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const uuid = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'idem-' + Date.now();",
+                      "pm.collectionVariables.set('idempotency_key', uuid);"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('201 PENDING', () => { pm.response.to.have.status(201); pm.expect(pm.response.json().status).to.eql('PENDING'); });",
+                      "pm.collectionVariables.set('request_id', pm.response.json().id);"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"}, {"key": "X-Role", "value": "employee"},
+                  {"key": "Idempotency-Key", "value": "{{idempotency_key}}"}, {"key": "Content-Type", "value": "application/json"}
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"startDate\": \"2026-06-01\",\n  \"endDate\": \"2026-06-02\"\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {"raw": "{{base_url}}/time-off-requests", "host": ["{{base_url}}"], "path": ["time-off-requests"]},
+                "description": "Submit 2 days. Captures request_id."
+              }
+            },
+            {
+              "name": "E-A5 — Approve request",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "X-Employee-Id", "value": "{{manager_id}}"}, {"key": "X-Role", "value": "manager"}, {"key": "Content-Type", "value": "application/json"}],
+                "body": {"mode": "raw", "raw": "{}", "options": {"raw": {"language": "json"}}},
+                "url": {"raw": "{{base_url}}/time-off-requests/{{request_id}}/approve", "host": ["{{base_url}}"], "path": ["time-off-requests", "{{request_id}}", "approve"]},
+                "description": "Approve → PENDING_SYNC."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('200/201', () => pm.expect([200,201]).to.include(pm.response.code));",
+                      "pm.test('PENDING_SYNC or APPROVED', () => pm.expect(['PENDING_SYNC','APPROVED']).to.include(pm.response.json().status));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "⏱ Wait 6s (dispatcher tick — promote to APPROVED)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["const now = Date.now(); while (Date.now() - now < 6000) { /* busy-wait */ }"]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {"type": "text/javascript", "exec": ["pm.test('Wait OK', () => pm.response.to.have.status(200));"]}
+                }
+              ],
+              "request": {
+                "method": "GET", "header": [],
+                "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
+                "description": "Wait for dispatcher to promote PENDING_SYNC → APPROVED."
+              }
+            },
+            {
+              "name": "E1 — Cancel approved request",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"}, {"key": "X-Role", "value": "employee"},
+                  {"key": "Content-Type", "value": "application/json"}
+                ],
+                "body": {"mode": "raw", "raw": "{}", "options": {"raw": {"language": "json"}}},
+                "url": {
+                  "raw": "{{base_url}}/time-off-requests/{{request_id}}/cancel",
+                  "host": ["{{base_url}}"], "path": ["time-off-requests", "{{request_id}}", "cancel"]
+                },
+                "description": "Cancel APPROVED → CANCELLED. Balance restored (available += 2). REVERSE enqueued in outbox."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('200/201', () => pm.expect([200,201]).to.include(pm.response.code));",
+                      "pm.test('Status=CANCELLED', () => pm.expect(pm.response.json().status).to.eql('CANCELLED'));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "⏱ Wait 6s (dispatcher tick — send REVERSE)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["const now = Date.now(); while (Date.now() - now < 6000) { /* busy-wait */ }"]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {"type": "text/javascript", "exec": ["pm.test('Wait OK', () => pm.response.to.have.status(200));"]}
+                }
+              ],
+              "request": {
+                "method": "GET", "header": [],
+                "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
+                "description": "Wait for dispatcher to send the REVERSE outbox row to HCM."
+              }
+            },
+            {
+              "name": "E2 — Direct: verify HCM balance=20 (REVERSE applied)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{hcm_url}}/hcm/balance?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{hcm_url}}"], "path": ["hcm", "balance"],
+                  "query": [{"key": "employeeId", "value": "{{employee_id}}"}, {"key": "locationId", "value": "{{location_id}}"}]
+                },
+                "description": "REVERSE should have credited the 2 days back at HCM. Expect balance=20."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('HCM balance restored to 20', () => pm.expect(pm.response.json().balance).to.eql(20));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
         },
         {
           "name": "F — Reconcile anniversary bonus (E7)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
-            "description": "## F — E7 Anniversary bonus via batch\n\n1. **Refresh** HCM with `balance: 30` (bonus added).\n2. **HCM Batch Sync → Ingest** with `sequence` greater than any previously sent (use `2`, `3`, … as you experiment) and `balances[].balance = 30`.\n3. **View own balance** — expect `available = 30` minus any local unacked deductions. Pending requests intact in `reserved`.\n\nADR-003 + ADR-009. PENDING reservations are NOT subtracted from the HCM base because HCM doesn't know about them; they only affect `reserved`."
-          }
+          "description": "## Goal\nVerify a batch corpus with a higher balance (anniversary bonus) increases the local available without disturbing active reservations (E7, ADR-003/009).\n\n## Expected flow\n1. Lazy-hydrate local balance (available=20, reserved=0 baseline).\n2. Refresh HCM to 30 (bonus added).\n3. Ingest batch with sequence > last and balance=30.\n4. View balance → available=30, reserved unchanged.\n\n## What to verify\n- Step 4: available=30 (bonus applied), reserved=0 if no active requests.",
+          "item": [
+            {
+              "name": "F1 — Seed HCM balance (20) and lazy-hydrate",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"balance\": 20\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {"raw": "{{hcm_url}}/_control/refresh", "host": ["{{hcm_url}}"], "path": ["_control", "refresh"]},
+                "description": "Seed initial balance."
+              },
+              "event": [
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Seed OK', () => pm.response.to.have.status(200));"]}}
+              ]
+            },
+            {
+              "name": "F2 — View balance (lazy-hydrate local row)",
+              "request": {
+                "method": "GET",
+                "header": [{"key": "X-Employee-Id", "value": "{{employee_id}}"}, {"key": "X-Role", "value": "employee"}],
+                "url": {
+                  "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{base_url}}"], "path": ["balances"],
+                  "query": [{"key": "employeeId", "value": "{{employee_id}}"}, {"key": "locationId", "value": "{{location_id}}"}]
+                },
+                "description": "Warm up local balance row via ADR-014 lazy-hydrate."
+              },
+              "event": [
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"]}}
+              ]
+            },
+            {
+              "name": "F3 — Refresh HCM balance to 30 (anniversary bonus)",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"balance\": 30\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {"raw": "{{hcm_url}}/_control/refresh", "host": ["{{hcm_url}}"], "path": ["_control", "refresh"]},
+                "description": "Simulate an anniversary bonus: HCM-side balance jumps to 30."
+              },
+              "event": [
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Bonus seeded OK', () => pm.response.to.have.status(200));"]}}
+              ]
+            },
+            {
+              "name": "F4 — Ingest batch (sequence=100, balance=30)",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sequence\": 100,\n  \"asOf\": \"2026-06-15T00:00:00.000Z\",\n  \"balances\": [\n    {\n      \"employeeId\": \"{{employee_id}}\",\n      \"locationId\": \"{{location_id}}\",\n      \"balance\": 30,\n      \"asOf\": \"2026-06-15T00:00:00.000Z\"\n    }\n  ]\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {"raw": "{{base_url}}/timeoff/hcm/batch", "host": ["{{base_url}}"], "path": ["timeoff", "hcm", "batch"]},
+                "description": "Ingest the bonus batch. sequence=100 is safely above any prior run. ADR-009 sequence guard passes; ADR-003 reconcile sets base=30."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["pm.test('Batch accepted', () => pm.expect([200,201,202]).to.include(pm.response.code));"]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "F5 — View balance (available=30)",
+              "request": {
+                "method": "GET",
+                "header": [{"key": "X-Employee-Id", "value": "{{employee_id}}"}, {"key": "X-Role", "value": "employee"}],
+                "url": {
+                  "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{base_url}}"], "path": ["balances"],
+                  "query": [{"key": "employeeId", "value": "{{employee_id}}"}, {"key": "locationId", "value": "{{location_id}}"}]
+                },
+                "description": "Post-reconcile: base=30, no unacked effects to replay → available=30."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('available=30 (bonus applied)', () => pm.expect(pm.response.json().available).to.eql(30));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
         },
         {
-          "name": "G — HCM timeout at approve (E4)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
-            "description": "## G — E4 HCM timeout at approve\n\n1. **Refresh** HCM balance to 20.\n2. **Mock HCM → Set scenario** `timeout`.\n3. **Submit** (lands PENDING).\n4. **Approve** — status → **PENDING_SYNC**, the outbox FILE row is `PENDING`. Local balance committed (available -= days).\n5. Wait — the dispatcher tries every 5s. Each retry fails (`hcm.callsTo.fileTimeOff` increments in the mock). After `HCM_RETRY_MAX_ATTEMPTS` (5) failures, the **retry-cap compensation path** fires:\n   - outbox FILE → `FAILED`\n   - `restore` (available += days)\n   - status → `REJECTED`\n   - new REVERSE outbox row enqueued\n6. **Set scenario** back to `correct`. The REVERSE outbox row gets sent next tick → idempotent no-op at HCM (no FILE landed).\n\nADR-004 / E5. The whole flow is non-blocking from the user's perspective."
-          }
+          "name": "G — HCM timeout at approve → retry-cap → REJECTED (E4/E5)",
+          "description": "## Goal\nExercise the full retry-cap compensation path: HCM stays down through all 5 attempts, triggering REVERSE and REJECTED (E4→E5, ADR-004).\n\n## Expected flow\n1. Seed 20, correct, hydrate, submit.\n2. Switch HCM to `timeout`.\n3. Approve → PENDING_SYNC.\n4–8. Wait 6 s × 5 rounds for 5 dispatcher failures.\n9. View balance → available=20, reserved=0 (restore fired on retry-cap).\n\n## What to verify\n- After 5× 6 s waits: status=REJECTED (retry-cap fired).\n- Balance restored: available=20, reserved=0.",
+          "item": [
+            {
+              "name": "G1 — Seed HCM balance (20)",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"balance\": 20\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {"raw": "{{hcm_url}}/_control/refresh", "host": ["{{hcm_url}}"], "path": ["_control", "refresh"]},
+                "description": "Seed to 20."
+              },
+              "event": [
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Seed OK', () => pm.response.to.have.status(200));"]}}
+              ]
+            },
+            {
+              "name": "G2 — Set scenario: correct (for approve)",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {"mode": "raw", "raw": "{\n  \"scenario\": \"correct\"\n}", "options": {"raw": {"language": "json"}}},
+                "url": {"raw": "{{hcm_url}}/_control/scenario", "host": ["{{hcm_url}}"], "path": ["_control", "scenario"]},
+                "description": "Start with correct so approve's HCM read succeeds."
+              },
+              "event": [
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('OK', () => pm.response.to.have.status(200));"]}}
+              ]
+            },
+            {
+              "name": "G3 — View balance (lazy-hydrate)",
+              "request": {
+                "method": "GET",
+                "header": [{"key": "X-Employee-Id", "value": "{{employee_id}}"}, {"key": "X-Role", "value": "employee"}],
+                "url": {
+                  "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{base_url}}"], "path": ["balances"],
+                  "query": [{"key": "employeeId", "value": "{{employee_id}}"}, {"key": "locationId", "value": "{{location_id}}"}]
+                },
+                "description": "Warm up balance."
+              },
+              "event": [
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"]}}
+              ]
+            },
+            {
+              "name": "G4 — Submit (Jun 1–2)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const uuid = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'idem-' + Date.now();",
+                      "pm.collectionVariables.set('idempotency_key', uuid);"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('201 PENDING', () => pm.response.to.have.status(201));",
+                      "pm.collectionVariables.set('request_id', pm.response.json().id);"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"}, {"key": "X-Role", "value": "employee"},
+                  {"key": "Idempotency-Key", "value": "{{idempotency_key}}"}, {"key": "Content-Type", "value": "application/json"}
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"startDate\": \"2026-06-01\",\n  \"endDate\": \"2026-06-02\"\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {"raw": "{{base_url}}/time-off-requests", "host": ["{{base_url}}"], "path": ["time-off-requests"]},
+                "description": "Submit 2 days. Saves request_id."
+              }
+            },
+            {
+              "name": "G5 — Set scenario: timeout (HCM goes down)",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {"mode": "raw", "raw": "{\n  \"scenario\": \"timeout\"\n}", "options": {"raw": {"language": "json"}}},
+                "url": {"raw": "{{hcm_url}}/_control/scenario", "host": ["{{hcm_url}}"], "path": ["_control", "scenario"]},
+                "description": "Switch to timeout BEFORE approval so the dispatcher's FILE calls all fail."
+              },
+              "event": [
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Timeout scenario set', () => pm.response.to.have.status(200));"]}}
+              ]
+            },
+            {
+              "name": "G6 — Approve → PENDING_SYNC",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "X-Employee-Id", "value": "{{manager_id}}"}, {"key": "X-Role", "value": "manager"}, {"key": "Content-Type", "value": "application/json"}],
+                "body": {"mode": "raw", "raw": "{}", "options": {"raw": {"language": "json"}}},
+                "url": {"raw": "{{base_url}}/time-off-requests/{{request_id}}/approve", "host": ["{{base_url}}"], "path": ["time-off-requests", "{{request_id}}", "approve"]},
+                "description": "Approve with HCM in timeout. Outbox FILE enqueued; status=PENDING_SYNC."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('200/201', () => pm.expect([200,201]).to.include(pm.response.code));",
+                      "pm.test('PENDING_SYNC (HCM down at approve time)', () => pm.expect(['PENDING_SYNC','APPROVED']).to.include(pm.response.json().status));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "⏱ Wait 6s — dispatcher attempt 1 (fails)",
+              "event": [
+                {"listen": "prerequest", "script": {"type": "text/javascript", "exec": ["const now = Date.now(); while (Date.now() - now < 6000) { /* busy-wait */ }"]}},
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Wait OK', () => pm.response.to.have.status(200));"]}}
+              ],
+              "request": {"method": "GET", "header": [], "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]}, "description": "Dispatcher fires, FILE call fails (timeout). Attempt count = 1."}
+            },
+            {
+              "name": "⏱ Wait 6s — dispatcher attempt 2 (fails)",
+              "event": [
+                {"listen": "prerequest", "script": {"type": "text/javascript", "exec": ["const now = Date.now(); while (Date.now() - now < 6000) { /* busy-wait */ }"]}},
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Wait OK', () => pm.response.to.have.status(200));"]}}
+              ],
+              "request": {"method": "GET", "header": [], "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]}, "description": "Attempt 2 fails."}
+            },
+            {
+              "name": "⏱ Wait 6s — dispatcher attempt 3 (fails)",
+              "event": [
+                {"listen": "prerequest", "script": {"type": "text/javascript", "exec": ["const now = Date.now(); while (Date.now() - now < 6000) { /* busy-wait */ }"]}},
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Wait OK', () => pm.response.to.have.status(200));"]}}
+              ],
+              "request": {"method": "GET", "header": [], "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]}, "description": "Attempt 3 fails."}
+            },
+            {
+              "name": "⏱ Wait 6s — dispatcher attempt 4 (fails)",
+              "event": [
+                {"listen": "prerequest", "script": {"type": "text/javascript", "exec": ["const now = Date.now(); while (Date.now() - now < 6000) { /* busy-wait */ }"]}},
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Wait OK', () => pm.response.to.have.status(200));"]}}
+              ],
+              "request": {"method": "GET", "header": [], "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]}, "description": "Attempt 4 fails."}
+            },
+            {
+              "name": "⏱ Wait 6s — dispatcher attempt 5 → retry-cap fires → REJECTED",
+              "event": [
+                {"listen": "prerequest", "script": {"type": "text/javascript", "exec": ["const now = Date.now(); while (Date.now() - now < 6000) { /* busy-wait */ }"]}},
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Wait OK', () => pm.response.to.have.status(200));"]}}
+              ],
+              "request": {"method": "GET", "header": [], "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]}, "description": "5th attempt hits retry cap. Dispatcher: outbox FILE → FAILED, restore balance, status → REJECTED, REVERSE enqueued."}
+            },
+            {
+              "name": "G7 — View balance (available=20, reserved=0 — restored)",
+              "request": {
+                "method": "GET",
+                "header": [{"key": "X-Employee-Id", "value": "{{employee_id}}"}, {"key": "X-Role", "value": "employee"}],
+                "url": {
+                  "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{base_url}}"], "path": ["balances"],
+                  "query": [{"key": "employeeId", "value": "{{employee_id}}"}, {"key": "locationId", "value": "{{location_id}}"}]
+                },
+                "description": "After retry-cap: restore() fired → available=20, reserved=0."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('available=20, reserved=0 (balance restored)', () => {",
+                      "  const j = pm.response.json();",
+                      "  pm.expect(j.available).to.eql(20);",
+                      "  pm.expect(j.reserved).to.eql(0);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
         },
         {
-          "name": "H — Reconcile drives balance negative (E26)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
-            "description": "## H — E26 Year-start drop → needsReview\n\n1. Walk through **A** so a request is APPROVED locally (`available = 18`).\n2. **Refresh** HCM with `balance: 2` (simulating a year-start drop AFTER the local approval).\n3. **Ingest batch** with the new `balance: 2` and `sequence` greater than the last.\n4. The reconcile algorithm computes `2 − 2 (unacked APPROVED) = 0` — or negative if the local commit hadn't acked yet. If negative, `needsReview = true` and a `FLAGGED_NEGATIVE` event is emitted.\n5. **View own balance** — observe `needsReview: true`.\n6. **Manager → Resolve review** — clears the flag.\n\nB4 / ADR-003. The system never silently goes negative; a human must adjudicate."
-          }
+          "name": "H — Reconcile drives balance negative → needsReview (E26)",
+          "description": "## Goal\nVerify that a batch reconcile that would make `available` negative instead sets `needsReview=true` and emits `FLAGGED_NEGATIVE`, and that a manager can clear it (E26, B4, ADR-003).\n\n## Expected flow\n1. Run scenario A steps 1–7 (seed 20, correct, hydrate, submit, approve, wait) so a request is APPROVED and HCM=18.\n2. Refresh HCM to 1 (simulating a drastic year-start drop).\n3. Ingest batch with balance=1 and a fresh sequence.\n4. Reconcile: base=1, minus 2 (unacked APPROVED) = -1 → needsReview=true.\n5. View balance → needsReview=true.\n6. Resolve review (manager) → needsReview cleared.\n\n## What to verify\n- Step 5: needsReview=true.\n- Step 6: 200/204 with needsReview cleared on next view.",
+          "item": [
+            {
+              "name": "H-A1 — Seed HCM (20), scenario correct",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {"mode": "raw", "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"balance\": 20\n}", "options": {"raw": {"language": "json"}}},
+                "url": {"raw": "{{hcm_url}}/_control/refresh", "host": ["{{hcm_url}}"], "path": ["_control", "refresh"]},
+                "description": "Seed HCM to 20."
+              },
+              "event": [
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Seed OK', () => pm.response.to.have.status(200));"]}}
+              ]
+            },
+            {
+              "name": "H-A2 — Set scenario: correct",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {"mode": "raw", "raw": "{\n  \"scenario\": \"correct\"\n}", "options": {"raw": {"language": "json"}}},
+                "url": {"raw": "{{hcm_url}}/_control/scenario", "host": ["{{hcm_url}}"], "path": ["_control", "scenario"]},
+                "description": "Normal HCM."
+              },
+              "event": [
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('OK', () => pm.response.to.have.status(200));"]}}
+              ]
+            },
+            {
+              "name": "H-A3 — View balance (lazy-hydrate)",
+              "request": {
+                "method": "GET",
+                "header": [{"key": "X-Employee-Id", "value": "{{employee_id}}"}, {"key": "X-Role", "value": "employee"}],
+                "url": {
+                  "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{base_url}}"], "path": ["balances"],
+                  "query": [{"key": "employeeId", "value": "{{employee_id}}"}, {"key": "locationId", "value": "{{location_id}}"}]
+                },
+                "description": "Warm up local balance."
+              },
+              "event": [
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"]}}
+              ]
+            },
+            {
+              "name": "H-A4 — Submit (Jun 1–2)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const uuid = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'idem-' + Date.now();",
+                      "pm.collectionVariables.set('idempotency_key', uuid);"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('201 PENDING', () => pm.response.to.have.status(201));",
+                      "pm.collectionVariables.set('request_id', pm.response.json().id);"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{employee_id}}"}, {"key": "X-Role", "value": "employee"},
+                  {"key": "Idempotency-Key", "value": "{{idempotency_key}}"}, {"key": "Content-Type", "value": "application/json"}
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"startDate\": \"2026-06-01\",\n  \"endDate\": \"2026-06-02\"\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {"raw": "{{base_url}}/time-off-requests", "host": ["{{base_url}}"], "path": ["time-off-requests"]},
+                "description": "Submit 2 days."
+              }
+            },
+            {
+              "name": "H-A5 — Approve request",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "X-Employee-Id", "value": "{{manager_id}}"}, {"key": "X-Role", "value": "manager"}, {"key": "Content-Type", "value": "application/json"}],
+                "body": {"mode": "raw", "raw": "{}", "options": {"raw": {"language": "json"}}},
+                "url": {"raw": "{{base_url}}/time-off-requests/{{request_id}}/approve", "host": ["{{base_url}}"], "path": ["time-off-requests", "{{request_id}}", "approve"]},
+                "description": "Approve → PENDING_SYNC."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {"type": "text/javascript", "exec": ["pm.test('200/201', () => pm.expect([200,201]).to.include(pm.response.code));"]}
+                }
+              ]
+            },
+            {
+              "name": "⏱ Wait 6s (dispatcher tick — promote to APPROVED)",
+              "event": [
+                {"listen": "prerequest", "script": {"type": "text/javascript", "exec": ["const now = Date.now(); while (Date.now() - now < 6000) { /* busy-wait */ }"]}},
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Wait OK', () => pm.response.to.have.status(200));"]}}
+              ],
+              "request": {"method": "GET", "header": [], "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]}, "description": "Wait for APPROVED."}
+            },
+            {
+              "name": "H1 — Refresh HCM to 1 (year-start drop)",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\",\n  \"balance\": 1\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {"raw": "{{hcm_url}}/_control/refresh", "host": ["{{hcm_url}}"], "path": ["_control", "refresh"]},
+                "description": "Simulate a drastic year-start balance drop — HCM now says only 1 day available, but we have a 2-day APPROVED that HCM may not have acked yet."
+              },
+              "event": [
+                {"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Drop seeded OK', () => pm.response.to.have.status(200));"]}}
+              ]
+            },
+            {
+              "name": "H2 — Ingest batch (sequence=200, balance=1)",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sequence\": 200,\n  \"asOf\": \"2026-07-01T00:00:00.000Z\",\n  \"balances\": [\n    {\n      \"employeeId\": \"{{employee_id}}\",\n      \"locationId\": \"{{location_id}}\",\n      \"balance\": 1,\n      \"asOf\": \"2026-07-01T00:00:00.000Z\"\n    }\n  ]\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {"raw": "{{base_url}}/timeoff/hcm/batch", "host": ["{{base_url}}"], "path": ["timeoff", "hcm", "batch"]},
+                "description": "sequence=200 clears any prior batch guard. ADR-003 reconcile: base=1, minus 2 (APPROVED with hcmAckAt>asOf) = -1 → needsReview=true."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["pm.test('Batch accepted', () => pm.expect([200,201,202]).to.include(pm.response.code));"]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "H3 — View balance (needsReview=true)",
+              "request": {
+                "method": "GET",
+                "header": [{"key": "X-Employee-Id", "value": "{{employee_id}}"}, {"key": "X-Role", "value": "employee"}],
+                "url": {
+                  "raw": "{{base_url}}/balances?employeeId={{employee_id}}&locationId={{location_id}}",
+                  "host": ["{{base_url}}"], "path": ["balances"],
+                  "query": [{"key": "employeeId", "value": "{{employee_id}}"}, {"key": "locationId", "value": "{{location_id}}"}]
+                },
+                "description": "Reconcile drove available negative → needsReview=true. FLAGGED_NEGATIVE ReconciliationEvent emitted."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('needsReview=true', () => pm.expect(pm.response.json().needsReview).to.eql(true));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "H4 — Resolve review (manager clears needsReview)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {"key": "X-Employee-Id", "value": "{{manager_id}}"}, {"key": "X-Role", "value": "manager"},
+                  {"key": "Content-Type", "value": "application/json"}
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"employeeId\": \"{{employee_id}}\",\n  \"locationId\": \"{{location_id}}\"\n}",
+                  "options": {"raw": {"language": "json"}}
+                },
+                "url": {"raw": "{{base_url}}/balances/resolve-review", "host": ["{{base_url}}"], "path": ["balances", "resolve-review"]},
+                "description": "Manager acknowledges the negative reconcile and clears the flag. needsReview → false."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": ["pm.test('Resolve OK', () => pm.expect([200,204]).to.include(pm.response.code));"]
+                  }
+                }
+              ]
+            }
+          ]
         },
         {
-          "name": "I — Reservation TTL expiry (E15)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
-            "description": "## I — E15 Reaper reclaims stale reservation\n\nThe reaper runs every 5 minutes (`@Cron(EVERY_5_MINUTES)`) and reservation TTL is 14 days by default (`RESERVATION_TTL_DAYS`).\n\nTo test in real time you'd either wait (impractical) or lower the TTL via env: stop the stack with `docker compose down`, edit `compose.yml`'s `RESERVATION_TTL_DAYS: 0` (or a small fractional day requires code change), and bring it back up.\n\nFor a meaningful demo, the **E15 test in `src/__tests__/cancel-and-reaper.spec.ts`** is the deterministic version — it injects a `FakeClock`, advances it 15 days, calls `reaper.sweep()` directly, and asserts the request → `EXPIRED` + reservation released + outbox FILE voided. See it in action via `npm run test`.\n\nThe Postman flow is mostly for awareness — the unit/integration test is the rigorous verification."
-          }
+          "name": "I — TTL expiry note (E15 — test-only)",
+          "description": "## This scenario cannot run end-to-end in Postman\n\nThe reservation reaper runs on a `@Cron(EVERY_5_MINUTES)` schedule and the default TTL is 14 days (`RESERVATION_TTL_DAYS`). A real Postman run-to-completion would require either:\n- Waiting 14+ days (impractical), or\n- Manually editing `RESERVATION_TTL_DAYS` in `compose.yml` to a very small value, restarting the stack, submitting a request, and waiting ~5 minutes for the next cron tick.\n\n**Recommended verification:** Use the Jest integration test `src/__tests__/cancel-and-reaper.spec.ts`, which injects a `FakeClock`, advances it 15 days (`clock.advance(15 * 24 * 60 * 60 * 1000)`), calls `reaper.sweep()` directly, and asserts:\n- Request status → `EXPIRED`\n- `reserved` released on the balance\n- Pending outbox FILE row voided in the same transaction (ADR-002/B2)\n\nRun with: `npm run test`\n\nThe placeholder request below is a health ping — it confirms the app is still up but does not exercise the reaper path.",
+          "item": [
+            {
+              "name": "I — App health (TTL scenario: see folder description)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {"raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""]},
+                "description": "Placeholder. The TTL/reaper scenario is best verified via `src/__tests__/cancel-and-reaper.spec.ts`. See the folder description for the FakeClock-based approach."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('App is up', () => pm.response.to.have.status(200));",
+                      "pm.test('TTL/reaper scenario — see Jest test cancel-and-reaper.spec.ts for deterministic verification', () => pm.expect(true).to.be.true);"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
         }
       ]
     }
@@ -529,6 +2076,7 @@
     {"key": "manager_id", "value": "manager1", "type": "string"},
     {"key": "request_id", "value": "", "type": "string", "description": "Auto-populated by the Submit request's test script."},
     {"key": "idempotency_key", "value": "", "type": "string", "description": "Auto-generated per Submit by the pre-request script. Set `reuse_idempotency_key=true` to replay the same key."},
-    {"key": "reuse_idempotency_key", "value": "false", "type": "string", "description": "When true, Submit's pre-request script keeps the existing idempotency_key instead of minting a fresh one."}
+    {"key": "reuse_idempotency_key", "value": "false", "type": "string", "description": "When true, Submit's pre-request script keeps the existing idempotency_key instead of minting a fresh one."},
+    {"key": "idempotency_key_replay", "value": "", "type": "string", "description": "Fixed idempotency key used by scenario C (E8 idempotent replay). Set by the scenario pre-request script to a stable value so both submits use the same key."}
   ]
 }
