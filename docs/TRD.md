@@ -359,6 +359,35 @@ overlap; partial-accept silently mutates intent.
 **Consequences:** Correct under double-click, boundary-touch, and concurrent disjoint requests. Cost: an overlap
 query per submit under the lock.
 
+### ADR-013 — Transactional outbox over external broker; single-transaction atomicity
+**Status:** Accepted
+**Context:** ADR-011 chose a transactional outbox to make reserve-then-file durable across a
+crash. Two follow-on questions surfaced in implementation review: (a) why not replace the
+SQLite outbox with an external broker (Redis/BullMQ, RabbitMQ, SQS); (b) `BalanceService`
+mutators were saving via the default DataSource while `TimeOffRequestService` wrapped the
+request + outbox writes in a separate `dataSource.transaction`, producing two transactions
+and re-opening the crash window ADR-011/NFR-7/E17 claim to close.
+**Decision:**
+1. Keep the SQLite outbox. The integrity property required is that the local state change
+and the "HCM-call intent" commit atomically; only a single local transaction gives that.
+An external broker would re-introduce the dual-write problem (DB commit + broker publish
+are not one transaction), add an operational dependency that contradicts §11, and buy
+nothing this service needs — one publisher, one dispatcher, one downstream.
+2. Make balance writes participate in the orchestrating transaction. `BalanceService`
+mutators accept an optional `EntityManager`. When provided, mutations use
+`manager.getRepository(Balance)`; when omitted, the default `DataSource`.
+`TimeOffRequestService.submit/approve/reject/cancel/expire` and the outbox dispatcher pass
+their `manager` so balance + request + outbox commit as one unit.
+**Alternatives considered:**
+- External broker (BullMQ/SQS): dual-write regression, no benefit at this fan-out.
+- Aggregate-owns-the-write (return a mutated `Balance`, orchestrator persists): structurally
+cleaner but a larger refactor; deferred.
+- Domain event bus participating in the txn: same fix wearing different clothes.
+- Accept the gap: violates NFR-7 and E17 directly.
+**Consequences:** Crash durability guarantee in ADR-011/NFR-7/E17 actually holds in code, not
+only on paper. Cost: six method signatures grow an optional parameter; every caller threads
+the `EntityManager`. No new runtime dependency.
+
 ---
 
 ## 8. HCM Interface Contract (mocked)
@@ -504,6 +533,10 @@ responsibilities at its own boundary:
 
 ## 14. Changelog
 
+- **v3.1** — ADR-013 added; balance arithmetic corrected to the §6 effects-list model (A1); reconcile filters
+  fixed for PENDING_SYNC (A3); reject/expire branch on status to call restore for PENDING_SYNC (A4);
+  BalanceService mutators accept optional EntityManager so balance + request + outbox writes commit in one
+  transaction (B).
 - **v3** — Folded a 4-lens review (architecture, adversarial, spec-compliance, editorial). Fixed the
   `committedAt`-vs-`asOf` lost-deduction seam by reconciling on `hcmAckAt` (ADR-003); brought the outbox
   dispatcher and reaper under the balance-key lock (ADR-010) and made the reaper void in-flight outbox rows

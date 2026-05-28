@@ -397,17 +397,29 @@ All methods: retry with exponential backoff up to `hcmRetryMaxAttempts` (ADR-004
 
 ### BalanceService (`src/balance/balance.service.ts`)
 
-| Method             | Signature                                                      | Intended behavior + ADRs                                                                                                 |
-|--------------------|----------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
-| getBalance         | `(employeeId, locationId) → Promise<Balance>`                  | Read-only. Creates zero record on first access. FR-1.                                                                     |
-| validateAvailability| `(employeeId, locationId, days) → Promise<void>`              | Throws ConflictException if available < days. Used for instant feedback at submit (ADR-001 local guard). No mutation.    |
-| reserve            | `(employeeId, locationId, days) → Promise<void>`               | available -= days, reserved += days. Must be called under balance-key lock. Throws if available < days (double-check). ADR-002. |
-| release            | `(employeeId, locationId, days) → Promise<void>`               | reserved -= days. Called on REJECTED/EXPIRED/cancel of PENDING. Under lock.                                             |
-| commit             | `(employeeId, locationId, days) → Promise<void>`               | available -= days, reserved -= days; committedAt = now. Under lock. ADR-001 step 4.                                     |
-| restore            | `(employeeId, locationId, days) → Promise<void>`               | available += days. Called on cancel of APPROVED. Under lock.                                                             |
-| applyHcmSnapshot   | `(snapshot: HcmBalance) → Promise<void>`                       | Sets available = snapshot.balance, lastHcmAsOf = snapshot.asOf. Under lock. ADR-001 step 2.                             |
-| reconcileBalance   | `(hcmEntry: HcmBalance, asOf: Date) → Promise<void>`           | ADR-003: base = hcmValue, replay hcmAckAt IS NULL OR > asOf, outstanding reservations, pending REVERSEs. Creates ReconciliationEvent. Sets needsReview if negative (B4). Under lock. |
-| resolveReview      | `(employeeId, locationId) → Promise<void>`                     | Clears needsReview. Manager-only (enforced in controller). Under lock. ADR-003/B4.                                       |
+| Method              | Signature                                                                      | Intended behavior + ADRs                                                                                                                                                                              |
+|---------------------|--------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| getBalance          | `(employeeId, locationId) → Promise<Balance>`                                  | Read-only. Creates zero record on first access. FR-1.                                                                                                                                                 |
+| validateAvailability| `(employeeId, locationId, days) → Promise<void>`                               | Throws ConflictException if `available - reserved < days`. Used for instant feedback at submit (ADR-001 local guard). No mutation.                                                                    |
+| reserve             | `(employeeId, locationId, days, manager?: EntityManager) → Promise<void>`      | `reserved += days` only. `available` is NOT decremented here — only at commit. Double-check under lock: throws if `available - reserved < days`. ADR-002.                                            |
+| release             | `(employeeId, locationId, days, manager?: EntityManager) → Promise<void>`      | `reserved -= days` (floored at 0). Called on REJECTED/EXPIRED/cancel of PENDING. Under lock.                                                                                                         |
+| commit              | `(employeeId, locationId, days, manager?: EntityManager) → Promise<void>`      | `available -= days`, `reserved -= days`. Under lock. ADR-001 step 4.                                                                                                                                 |
+| restore             | `(employeeId, locationId, days, manager?: EntityManager) → Promise<void>`      | `available += days`. Called on cancel/reject/expire of APPROVED or PENDING_SYNC. Under lock.                                                                                                         |
+| applyHcmSnapshot    | `(snapshot: HcmBalance, manager?: EntityManager) → Promise<void>`              | Sets `available = snapshot.balance`, `lastHcmAsOf = snapshot.asOf`. Under lock. ADR-001 step 2.                                                                                                      |
+| reconcileBalance    | `(hcmEntry: HcmBalance, asOf: Date, manager?: EntityManager) → Promise<void>`  | ADR-003: base = hcmValue, replay APPROVED/PENDING_SYNC with hcmAckAt IS NULL OR > asOf, outstanding PENDING reservations, pending REVERSEs. Creates ReconciliationEvent. Sets needsReview if negative (B4). Under lock. |
+| resolveReview       | `(employeeId, locationId) → Promise<void>`                                     | Clears needsReview. Manager-only (enforced in controller). Acquires its own lock. ADR-003/B4.                                                                                                         |
+
+#### Transaction participation (ADR-013)
+
+When a caller holds an active `EntityManager` from a `dataSource.transaction(async manager => {...})` block,
+it passes `manager` as the trailing argument to any mutator. The mutator then routes all balance reads and
+writes through `manager.getRepository(Balance)` and `manager.save(Balance, ...)`, making the balance write
+part of the caller's transaction.
+
+When `manager` is omitted, the mutator uses the default injected `DataSource` (current behavior, unchanged).
+
+This convention ensures that balance + request + outbox writes commit as one atomic unit, closing the crash
+window described in ADR-011/NFR-7/E17. See ADR-013 for full rationale.
 
 ### TimeOffRequestService (`src/time-off-request/time-off-request.service.ts`)
 
