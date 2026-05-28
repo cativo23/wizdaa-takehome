@@ -637,3 +637,77 @@ describe('balance arithmetic — Model A invariants', () => {
     expect(balAfterCancel.reserved).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Coverage gap-fill: service edge-cases not exercised elsewhere
+// ---------------------------------------------------------------------------
+
+describe('TimeOffRequestService — edge branches (coverage)', () => {
+  let moduleRef: Awaited<ReturnType<ReturnType<typeof createTestModule>['builder']['compile']>>;
+  let svc: TimeOffRequestService;
+  let balanceRepo: Repository<Balance>;
+  let outboxRepo: Repository<Outbox>;
+  let clock: ReturnType<typeof createTestModule>['clock'];
+  let hcm: ReturnType<typeof createTestModule>['hcm'];
+  let dispatcher: OutboxDispatcherService;
+
+  beforeEach(async () => {
+    const handles = createTestModule();
+    clock = handles.clock;
+    hcm = handles.hcm;
+    moduleRef = await handles.builder.compile();
+    await moduleRef.init();
+    svc = moduleRef.get(TimeOffRequestService);
+    balanceRepo = moduleRef.get(getRepositoryToken(Balance));
+    outboxRepo = moduleRef.get(getRepositoryToken(Outbox));
+    dispatcher = moduleRef.get(OutboxDispatcherService);
+
+    await seedBalance(balanceRepo, { available: 10, reserved: 0 });
+    hcm.seedBalance('emp1', 'loc1', 10);
+    hcm.setScenario('correct');
+  });
+
+  afterEach(() => moduleRef.close());
+
+  it('submit with endDate before startDate throws UnprocessableEntityException (countBusinessDays branch)', async () => {
+    await expect(
+      svc.submit('emp1', 'loc1', '2026-06-05', '2026-06-01', 'key-bad-dates'),
+    ).rejects.toThrow('endDate must not be before startDate');
+  });
+
+  it('findById returns null for an unknown request ID', async () => {
+    const result = await svc.findById('00000000-0000-0000-0000-000000000000');
+    expect(result).toBeNull();
+  });
+
+  it('cancel on a REJECTED request throws BadRequestException (invalid terminal status branch)', async () => {
+    const req = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', 'key-reject-cancel');
+    await svc.reject(req.id, 'manager1');
+    await expect(svc.cancel(req.id, 'emp1')).rejects.toThrow(/Cannot cancel a request in status/);
+  });
+
+  it('reject a PENDING_SYNC request: restores available and voids the FILE outbox row', async () => {
+    // Put the request into PENDING_SYNC via approve under HCM timeout so FILE stays PENDING.
+    hcm.setScenario('timeout');
+    const req = await svc.submit('emp1', 'loc1', '2026-06-01', '2026-06-02', 'key-reject-ps');
+    const approved = await svc.approve(req.id, 'manager1');
+    expect(approved.status).toBe(RequestStatus.PENDING_SYNC);
+
+    // FILE row should be PENDING
+    const fileRowBefore = await outboxRepo.findOneOrFail({
+      where: { aggregateId: req.id, operation: OutboxOperation.FILE },
+    });
+    expect(fileRowBefore.status).toBe(OutboxStatus.PENDING);
+
+    // Reject: PENDING_SYNC path → restore available + void FILE
+    await svc.reject(req.id, 'manager1');
+
+    const balAfter = await balanceRepo.findOneOrFail({
+      where: { employeeId: 'emp1', locationId: 'loc1' },
+    });
+    expect(balAfter.available).toBe(10);
+
+    const fileRowAfter = await outboxRepo.findOneOrFail({ where: { id: fileRowBefore.id } });
+    expect(fileRowAfter.status).toBe(OutboxStatus.VOIDED);
+  });
+});

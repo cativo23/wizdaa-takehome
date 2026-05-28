@@ -249,3 +249,77 @@ describe('HcmClientService.reverseTimeOff', () => {
     expect(http.post).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Coverage gap-fill: branches not exercised by the main suites above
+// ---------------------------------------------------------------------------
+
+describe('HcmClientService — coverage edge branches', () => {
+  it('getBalance retry:false success path: returns HcmBalance in a single fast-fail attempt', async () => {
+    const expected = {
+      employeeId: 'emp1',
+      locationId: 'loc1',
+      balance: 5,
+      asOf: '2026-06-01T00:00:00Z',
+    };
+    const http = makeHttpService();
+    http.get.mockReturnValue(of({ data: expected } as any));
+    const svc = buildService(http);
+
+    const result = await svc.getBalance('emp1', 'loc1', { retry: false });
+
+    expect(result).toEqual(expected);
+    expect(http.get).toHaveBeenCalledTimes(1);
+    const [, opts] = http.get.mock.calls[0];
+    expect(opts).toMatchObject({ timeout: 2500 });
+  });
+
+  it('postWithRetry: 200 response with ok=undefined is treated as success (warn path)', async () => {
+    const http = makeHttpService();
+    const ackedAt = '2026-06-01T10:00:00Z';
+    // ok field absent from response
+    http.post.mockReturnValue(of({ data: { ackedAt } } as any));
+    const svc = buildService(http);
+
+    const result = await svc.fileTimeOff({
+      employeeId: 'emp1',
+      locationId: 'loc1',
+      days: 1,
+      startDate: '2026-06-02',
+      endDate: '2026-06-02',
+      idempotencyKey: 'key-ok-undefined',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.ackedAt).toBe(ackedAt);
+  });
+
+  it('non-Axios error in fileTimeOff: treated as retryable, exhausts attempts, returns {ok:false,errorHint:"unknown_error"}', async () => {
+    const maxAttempts = 2;
+    const http = makeHttpService();
+    http.post.mockReturnValue(throwError(() => new Error('unexpected non-axios')));
+    const svc = buildService(http, makeConfig({ hcmRetryMaxAttempts: maxAttempts }));
+
+    const result = await svc.fileTimeOff({
+      employeeId: 'emp1',
+      locationId: 'loc1',
+      days: 1,
+      startDate: '2026-06-02',
+      endDate: '2026-06-02',
+      idempotencyKey: 'key-non-axios',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.errorHint).toBe('unknown_error');
+    expect(http.post).toHaveBeenCalledTimes(maxAttempts);
+  });
+
+  it('backoffDelay resolves after the configured delay (live — not mocked)', async () => {
+    const http = makeHttpService();
+    const config = makeConfig({ hcmRetryBackoffMs: 1 });
+    const svc = new HcmClientService(http, config as any);
+
+    // Call backoffDelay directly (protected — cast to any)
+    await expect((svc as any).backoffDelay(1)).resolves.toBeUndefined();
+  });
+});
