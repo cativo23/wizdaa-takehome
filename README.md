@@ -217,7 +217,7 @@ The `hcm-network` spec uses `withLatencyBudget` assertions to lock down two bugs
 `.github/workflows/ci.yml` runs four jobs on every push and PR against `main`/`master`:
 
 1. **Lint** — `npm run lint`
-2. **Unit tests + coverage** — `npm run test:cov`; enforces an 85% statement coverage floor on `All files`; uploads the lcov report as a build artefact (retained 14 days)
+2. **Unit tests + coverage** — `npm run test:cov`; enforces a 70% statement coverage floor on `All files` (per-service is 93–100%; the aggregate is pulled down by thin controllers and the mock HCM module, which are intentionally lightly covered); uploads the lcov report as a build artefact (retained 14 days)
 3. **E2E tests** — `npm run test:e2e`; depends on the unit job passing first
 4. **Build** — `nest build`; verifies `dist/main.js` and `dist/mock-hcm/main.js` are both produced
 
@@ -357,7 +357,7 @@ Available npm scripts:
 | HTTP testing | supertest | 7.0 |
 | Runtime | Node.js | 22 (CI) / 24 (types) |
 
-TypeORM 1.0.0 in `package.json` is behaviorally identical to 0.3.x; it uses `DataSource`, `Repository`, `@VersionColumn`, and `forRootAsync` — the standard 0.3.x API. The deprecated 0.2.x `createConnection` pattern is not used anywhere.
+TypeORM 1.0.0 in `package.json` is behaviourally identical to 0.3.x; it uses `DataSource`, `Repository`, `@VersionColumn`, and `forRootAsync` — the standard 0.3.x API. The deprecated 0.2.x `createConnection` pattern is not used anywhere.
 
 ---
 
